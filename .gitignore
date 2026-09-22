@@ -1,0 +1,12 @@
+firmware/.pio/
+.DS_Store
+certs/*-key.pem
+certs/*.pem
+probe.log
+probe-emu.log
+__pycache__/
+tools/lcdsim/out/
+tools/lcdsim/lcdsim
+node_modules/
+tools/e2e/out/
+.impeccable/
