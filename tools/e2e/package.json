@@ -1,0 +1,12 @@
+{
+  "name": "nib-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Browser tests for the N.I.B. web app (WebKit and Chromium, via Playwright).",
+  "scripts": {
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.63.0"
+  }
+}

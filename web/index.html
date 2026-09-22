@@ -1,0 +1,611 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- maximum-scale=1: Safari ignores it (accessibility), a WKWebView host such
+     as Bluefy honours it. A zoomed trackpad is a broken one: the fixed layers
+     no longer coincide with what is drawn, and the zoom outlives the gesture. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>N.I.B.</title>
+<!-- The icon is the header's three circles; below 64 px, just the dots. -->
+<link rel="icon" type="image/svg+xml" href="icons/icon-small.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.webmanifest">
+<!-- serve.py rewrites every "?v=N" in this file to the current version on the
+     way out, so this meta is the version of THIS copy of the page, whatever
+     cache it came back from. It must stay above the script that reads it. -->
+<meta name="nib-v" content="?v=0">
+<script>
+// Saved data from when the project was called BlueHID (layout, snippets,
+// trackpad and keyboard settings) moves to the nib.* names once, before any
+// module reads them.
+try {
+  const OLD = 'blue' + 'hid.';   // split so a project-wide rename cannot rewrite it
+  // Keys first, then writes: adding keys mid-loop reorders the index in WebKit.
+  const old = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (k && k.startsWith(OLD)) old.push(k);
+  }
+  for (const k of old) {
+    const to = 'nib.' + k.slice(OLD.length);
+    if (localStorage.getItem(to) === null) localStorage.setItem(to, localStorage.getItem(k));
+    localStorage.removeItem(k);
+  }
+} catch { /* private mode: nothing saved to move */ }
+// Self-update. WKWebView browsers such as Bluefy keep a stale copy of this page
+// regardless of Cache-Control, and they restore the last tab from memory when
+// the app is reopened, so a load event alone never gets a chance to run. This
+// asks the server for the current version on load, every time the page comes
+// back to the foreground, and every 20s while visible; when it differs, it
+// loads a URL the cache has never seen.
+//
+// The comparison is against the version baked into THIS document, never against
+// the URL or localStorage: a cached copy of the bare URL reopened after a newer
+// session had already stored the newer number would otherwise pass as current
+// and keep running yesterday's code (reproduced in pw/stale.mjs).
+//
+// The loop guard is the URL itself, not sessionStorage: a document that already
+// carries ?v=<current> and is still stale is a cache handing back the wrong
+// body for a URL it has never seen, so stop there. Anything else (the bare
+// bookmark, an older ?v=, a reload that landed on the proxy's 503 page) reloads,
+// however many times this tab has bounced before. A sessionStorage flag keyed
+// on the version outlived the tab's navigations and left the reopened bookmark
+// on yesterday's build until the next edit (pw/cache3.mjs, pw/update.mjs).
+//
+// Self-heal, second half. A page whose stylesheet or one of whose nine modules
+// failed to arrive (a proxy 503 mid-load) paints every control and answers no
+// tap: the module graph fails as a whole, app.js never runs, and the updater
+// cannot help because the version has not changed. That page is the phone's
+// "hitboxes don't work" (pw/broken.mjs, pw/module503.mjs). So: a failed
+// script or stylesheet, or an app that has not started 6s after load, reloads
+// on a URL the cache has never seen, at most 3 times per tab in a row; the
+// counter clears once the app is up, so a later spell gets its own 3.
+(() => {
+  let busy = false;
+  let leaving = false;
+  // One navigation per document. Once it is on its way out (its own replace,
+  // or the bookmark tapped again), no further check starts and the one in
+  // flight is aborted: a fetch cut off by the navigation itself never reaches
+  // its catch and is reported as an unhandled error. Playwright's goto fires a
+  // focus on the old window in the same tick (pw/vtdiag.mjs).
+  let ctrl = null;
+  const go = (url) => { leaving = true; location.replace(url); };
+  window.addEventListener('pagehide', () => { leaving = true; if (ctrl) ctrl.abort(); });
+  const baked = ((document.querySelector('meta[name="nib-v"]') || {}).content || '').replace(/^\?v=/, '');
+  // Read by the field report (app.js), so a probe.log line from the phone says
+  // whether this ever ran there, what it saw, and what it did about it.
+  const U = window.__nibUpd = { baked, checks: 0, last: null };
+  const check = async (why) => {
+    if (busy || leaving || document.hidden) return;
+    busy = true;
+    U.checks++;
+    // A version fetch the proxy holds open (origin down, radio handoff) used to
+    // keep `busy` set for as long as the connection lived: no check after it
+    // ever ran, and the page sat on the old build with nothing to do but
+    // clear site data (pw/hang.mjs). Give up after 8s and try again next time.
+    const tmo = setTimeout(() => { if (ctrl) ctrl.abort(); }, 8000);
+    try {
+      ctrl = new AbortController();
+      const r = await fetch('version.txt?t=' + Date.now(), { cache: 'no-store', signal: ctrl.signal });
+      if (!r.ok) { U.last = `${why}: http ${r.status}`; return; }
+      const v = (await r.text()).trim();
+      if (!v || !/^\d+$/.test(v) || v === baked || leaving) { U.last = `${why}: server ${v} baked ${baked}`; return; }
+      const here = new URL(location.href);
+      if (here.searchParams.get('v') === v) { U.last = `${why}: url already ?v=${v}, cache is wrong`; return; }
+      here.searchParams.set('v', v);
+      // A reload drops the Bluetooth link, so a connected page never updates
+      // itself: it waits for the link to go (app.js applies U.pending then),
+      // and the menu's Reload button marks that an update is ready.
+      if (window.__nibLinked) {
+        U.pending = here.toString();
+        U.last = `${why}: ?v=${v} ready, waiting for disconnect`;
+        document.getElementById('reload')?.classList.add('has-update');
+        return;
+      }
+      U.last = `${why}: reload to ?v=${v}`;
+      go(here.toString());
+    } catch (e) { U.last = `${why}: ${e && e.name}`; /* offline, timed out, or no version endpoint */ }
+    finally { busy = false; clearTimeout(tmo); }
+  };
+  check('load');
+  // A document restored from the back/forward cache is alive again: pagehide
+  // (persisted) had set `leaving`, and without clearing it every later check
+  // returned at once, so a restored page never updated again (pw/bfcache.mjs).
+  window.addEventListener('pageshow', (e) => { if (e.persisted) { leaving = false; check('bfcache'); } });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) check('visible'); });
+  window.addEventListener('focus', () => check('focus'));
+  setInterval(() => check('tick'), 20000);
+
+  const KEY = 'nib.retry';
+  const retry = (why) => {
+    if (leaving) return;
+    let n = 0;
+    try { n = Number(sessionStorage.getItem(KEY) || 0); } catch { /* private mode */ }
+    if (n >= 3) return;
+    try { sessionStorage.setItem(KEY, String(n + 1)); } catch { /* private mode */ }
+    const here = new URL(location.href);
+    here.searchParams.set('r', String(Date.now()));
+    setTimeout(() => { if (!leaving) go(here.toString()); }, 1500);
+  };
+  window.addEventListener('error', (e) => {
+    const t = e.target;
+    if (!t || t === window) return;
+    if (t.tagName === 'SCRIPT' || (t.tagName === 'LINK' && t.rel === 'stylesheet')) retry(t.tagName + ' failed to load');
+  }, true);
+  // app.js writes --vvh on <html> the moment it boots; nothing else does.
+  window.addEventListener('load', () => setTimeout(() => {
+    if (document.documentElement.style.getPropertyValue('--vvh')) {
+      try { sessionStorage.removeItem(KEY); } catch { /* private mode */ }
+    } else retry('app never started');
+  }, 6000));
+})();
+</script>
+<link rel="stylesheet" href="theme.css?v=12">
+</head>
+
+<!-- data-mode  pad | keys        set by the mode button
+     data-drawer closed | drag | open   set by the drawer controller
+     data-conn   off | wait | on   set by app.js from the ble status event
+     data-shell  phone | desktop  resolved by app.js from a media query plus
+                 the stored override, so the pad is a card on a desktop -->
+<body class="nib" data-mode="pad" data-drawer="closed" data-conn="off" data-shell="phone">
+
+<!-- ============================ STAGE ============================ -->
+<main id="nib-stage" class="nib-stage">
+
+  <!-- pad.js owns this element:
+       createTrackpad({ surface: document.getElementById('stage-pad'), ... })
+       It appends  .pad-layer > .pad-note .pad-coach .pad-hud .pad-hold
+                   .pad-corner .pad-buttons
+       and injects its own stylesheet (#nib-pad-css). Style .pad-* as the
+       CONTENT layer, never as glass. Keep this element empty in the HTML.
+       The controller writes --pad-x / --pad-y (percentages) on it on every
+       contact so the finger glow can follow.
+       role=application plus tabindex: arrow keys nudge the pointer and Enter
+       clicks, because a pointer surface is otherwise unreachable without one. -->
+  <div id="stage-pad" class="nib-pad" tabindex="0" role="application"
+       aria-label="Trackpad. Drag to move the pointer, tap to click. Arrow keys nudge it, Enter clicks."></div>
+
+  <!-- osk.js owns this element:
+       createKeyboard({ mount: '#stage-keys', ... })
+       It appends  div.osk > div.osk-row > button.osk-key
+       with the existing contract classes .osk-key.wide .xwide .mod .on
+       .latched .dead .ghost, plus the NEW div.osk-gap (a non-interactive
+       spacer for preset entries of type 'gap').
+       --osk-rows / --osk-units are rewritten from OSK_METRICS on every
+       preset change; the stylesheet sizes keys from them. -->
+  <div id="stage-keys" class="nib-keys glass glass-m" hidden
+       style="--osk-rows:4;--osk-units:10"></div>
+
+  <!-- Visible only in keys mode, but it keeps its box at all times: growing it
+       from nothing used to shove the keyboard 26px upward on the frame it
+       appeared. It is the only proof a keystroke landed, so it is announced. -->
+  <div id="nib-echo" class="nib-echo" role="status" aria-live="polite"
+       aria-atomic="false"></div>
+
+</main>
+
+<!-- ======================= FLOATING CHROME =======================
+     The container is pointer-events:none; each control turns it back on.
+     It is hidden (opacity 0, pointer-events none) while html.fs-open. -->
+<div id="nib-chrome" class="nib-chrome">
+
+  <!-- status AND connect, one control. Keeps id="connect" and the inner
+       span id="status" so app.js's existing handlers still bind. -->
+  <button id="connect" type="button" class="nib-pill glass glass-s">
+    <span class="nib-dot" aria-hidden="true"></span>
+    <span class="nib-pill-name">N.I.B.</span>
+    <span id="nib-conn-label" class="nib-pill-action">Connect</span>
+    <span id="status" class="status off nib-sr">disconnected</span>
+  </button>
+
+  <button id="nib-menu" type="button" class="nib-icon glass glass-s"
+          aria-controls="nib-drawer" aria-expanded="false" aria-label="Menu">
+    <span class="nib-burger" aria-hidden="true"><i></i><i></i><i></i></span>
+  </button>
+
+  <!-- tap = swap pad/keys · hold (or Shift+Enter) = full screen -->
+  <button id="nib-mode" type="button" class="nib-mode glass glass-s"
+          aria-label="On-screen keyboard. Hold, or press Shift+Enter, for full screen.">
+    <span id="nib-mode-ring" class="nib-ring" aria-hidden="true"></span>
+    <svg class="nib-glyph nib-glyph-keys" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="2.5" y="6.5" width="19" height="11" rx="2.5"/>
+      <path d="M6 10h.01M9 10h.01M12 10h.01M15 10h.01M18 10h.01M8 14h8"/>
+    </svg>
+    <svg class="nib-glyph nib-glyph-pad" viewBox="0 0 24 24" aria-hidden="true">
+      <rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/>
+      <path d="M3.5 15h17"/>
+    </svg>
+  </button>
+
+  <div id="nib-toast" class="nib-toast glass glass-s is-out" role="status" aria-live="polite">
+    <span id="log"></span>
+  </div>
+
+</div>
+
+<!-- ============================ THE SHEET ============================
+     Full screen, not a side pane. --p is 0 (closed) .. 1 (open), written once
+     per frame by the controller; the transform and the stage's push-back derive
+     from it. There is no scrim (nothing is left to dim) and no right-edge drag
+     zone (it was a dead 24px column over the pad and over the keyboard's
+     Backspace/Enter/arrow column). -->
+<aside id="nib-drawer" class="nib-drawer glass glass-l" style="--p:0"
+       role="dialog" aria-modal="true" aria-labelledby="nib-drawer-title" hidden>
+
+  <!-- A handle at the top, not a full-height strip: the old one silently killed
+       vertical scrolling down the whole leading edge of the sheet. -->
+  <div id="nib-drawer-grab" class="nib-drawer-grab" aria-hidden="true"></div>
+
+  <header id="nib-drawer-head" class="nib-drawer-head">
+    <h1 id="nib-drawer-title" class="nib-drawer-title">N.I.B.</h1>
+    <p id="nib-sub" class="nib-drawer-sub">not connected</p>
+    <button id="nib-drawer-close" type="button" class="nib-icon nib-icon-plain"
+            aria-label="Close menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    </button>
+  </header>
+
+  <!-- .is-scrolled is toggled on #nib-drawer when this scrolls off 0, which
+       turns on the header's scroll-edge gradient. -->
+  <div id="nib-drawer-body" class="nib-drawer-body">
+
+    <!-- Touched every session, never collapsed: one inset group, each row a
+         label and its value, the sliders reading out what they are set to. -->
+    <div id="sect-quick" class="nib-quick">
+      <div class="nib-group">
+        <label class="nib-row" for="target">
+          <span class="nib-row-label">Computer OS</span>
+          <select id="target" class="nib-row-select">
+            <option value="auto">Auto</option>
+            <option value="win">Windows</option>
+            <option value="mac">Mac</option>
+            <option value="linux">Linux</option>
+          </select>
+        </label>
+        <label class="nib-row" for="layout">
+          <span class="nib-row-label">Keyboard language</span>
+          <select id="layout" class="nib-row-select"></select>
+        </label>
+        <label class="nib-row nib-row-range" for="speed">
+          <span class="nib-row-label">Pointer speed</span>
+          <output class="nib-row-value" id="speed-val" for="speed"></output>
+          <input type="range" id="speed" min="0.5" max="4" step="0.1" value="1.8">
+        </label>
+        <label class="nib-row nib-row-range" for="scroll-speed">
+          <span class="nib-row-label">Scroll speed</span>
+          <output class="nib-row-value" id="scroll-speed-val" for="scroll-speed"></output>
+          <input type="range" id="scroll-speed" min="1" max="10" step="0.5" value="3">
+        </label>
+      </div>
+      <button id="panic" type="button" class="btn nib-pair-btn">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8h12v8H6zM9 12h6"/></svg>
+        Release stuck keys
+      </button>
+    </div>
+
+    <!-- ---- capture: only unhidden when capture.js SUPPORT allows it ----
+         app.js moves this to the top of the sheet and opens it on a desktop. -->
+    <details class="nib-sect" id="sect-capture" hidden>
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Capture this computer</span>
+        <span class="nib-sect-hint" id="cap-state">off</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <button class="btn wide" type="button" id="cap-toggle">Start capture</button>
+        <p class="note">Press <strong>Ctrl+Alt</strong> together to release. Esc goes across.</p>
+        <p class="note" id="cap-degraded"></p>
+
+        <label class="nib-field" for="modmap">
+          <span class="lbl">Modifier keys</span>
+          <select id="modmap">
+            <option value="position">By position</option>
+            <option value="shortcuts">For shortcuts (⌘ acts as Ctrl)</option>
+            <option value="labels">As labelled</option>
+            <option value="custom">Custom</option>
+          </select>
+        </label>
+        <div class="nib-modmap-custom" id="modmap-custom" hidden>
+          <label>Control sends <select data-fam="ctrl"></select></label>
+          <label>Option / Alt sends <select data-fam="alt"></select></label>
+          <label>Command / Win sends <select data-fam="meta"></select></label>
+        </div>
+        <p class="note" id="modmap-note"></p>
+      </div>
+    </details>
+
+    <!-- ------------- send text: an action, so it starts closed -------------- -->
+    <details class="nib-sect" id="sect-send">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Send text</span>
+        <span class="nib-sect-hint">typing, passwords, snippets</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <textarea id="live" rows="3" autocapitalize="off"
+                  autocomplete="off"
+                  placeholder="Tap here and type"></textarea>
+        <div class="row wrapped" id="mods">
+          <button class="btn mod" type="button" data-mod="8">Cmd</button>
+          <button class="btn mod" type="button" data-mod="1">Ctrl</button>
+          <button class="btn mod" type="button" data-mod="4">Opt</button>
+          <button class="btn mod" type="button" data-mod="2">Shift</button>
+        </div>
+        <p class="note">Tap a modifier for the next key, hold it to lock.</p>
+        <label class="check"><input type="checkbox" id="live-secret"> Secret (not logged)</label>
+
+        <span class="lbl">Password</span>
+        <form id="pwform" autocomplete="on" onsubmit="return false">
+          <input type="text" id="user" name="username" autocomplete="username"
+                 placeholder="Username (optional)">
+          <input type="password" id="pass" name="password" autocomplete="current-password"
+                 placeholder="Password">
+        </form>
+        <p class="note">Autofill, then type. Never stored.</p>
+        <div class="row wrapped">
+          <button class="btn wide" type="button" id="type-pass">Type password</button>
+          <button class="btn wide" type="button" id="type-pass-enter">Type + Enter</button>
+        </div>
+        <div class="row wrapped">
+          <button class="btn wide" type="button" id="type-both">Log in</button>
+          <button class="btn wide" type="button" id="type-user">Username only</button>
+        </div>
+        <button class="btn danger wide" type="button" id="clear-pw">Clear</button>
+
+        <span class="lbl">Snippets <span class="lbl-aside">on this phone</span></span>
+        <!-- app.js renderSnippets() builds, inside #snips:
+             p.empty
+             div.snip > div.meta > div.name (> span.tag) + div.peek
+                      , button.btn , button.btn.small , button.btn.small.danger
+             Those class names are a hard contract; do not rename them. -->
+        <div id="snips" class="snips"></div>
+        <details id="snip-editor">
+          <summary class="nib-link">+ Add a snippet</summary>
+          <div class="editor">
+            <input type="text" id="snip-name" placeholder="Name, e.g. work email"
+                   autocapitalize="off" autocorrect="off" spellcheck="false">
+            <textarea id="snip-text" rows="3" placeholder="Text to type"
+                      autocapitalize="off" autocorrect="off" spellcheck="false"></textarea>
+            <label class="check"><input type="checkbox" id="snip-enter"> Press Enter after</label>
+            <label class="check"><input type="checkbox" id="snip-secret"> Secret (not logged)</label>
+            <div class="row">
+              <button class="btn wide" type="button" id="snip-save">Save</button>
+              <button class="btn" type="button" id="snip-cancel">Cancel</button>
+            </div>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <!-- --------------------- keyboard sizes --------------------- -->
+    <details class="nib-sect" id="sect-keys">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Keyboard</span>
+        <span class="nib-sect-hint" id="osk-preset-now">Compact</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <!-- app.js builds one button.nib-preset per keyboard preset here, and
+             the remote-style ones into #osk-remotes below:
+               button.nib-preset[data-preset][aria-pressed]
+                 > span.nib-preset-label + span.nib-preset-hint + span.nib-preset-metric -->
+        <div id="osk-presets" class="nib-presets" role="group"
+             aria-label="Keyboard size"></div>
+        <p class="note" id="osk-note">Larger sizes scroll sideways on a phone.</p>
+        <label class="check"><input type="checkbox" id="osk-haptics" checked> Vibrate on each key</label>
+      </div>
+    </details>
+
+    <!-- ------------- remotes and pads: full-screen, not keyboards ------------- -->
+    <details class="nib-sect" id="sect-remotes">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Remotes &amp; pads</span>
+        <span class="nib-sect-hint">TV, slides, media, gamepads</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <div id="osk-remotes" class="nib-presets" role="group" aria-label="Remotes and pads"></div>
+      </div>
+    </details>
+
+    <!-- ------------------------- trackpad ------------------------- -->
+    <details class="nib-sect" id="sect-pad">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Trackpad</span>
+        <span class="nib-sect-hint">scrolling, gestures</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <label class="check"><input type="checkbox" id="pad-natural" checked> Natural scrolling</label>
+        <label class="check"><input type="checkbox" id="pad-haptics" checked> Vibrate on clicks</label>
+        <details class="nib-sub">
+          <summary class="nib-link">Gestures</summary>
+          <!-- one row per entry in pad.js GESTURES:
+               div.nib-gesture > span.nib-gesture-do + span.nib-gesture-help -->
+          <div id="pad-gestures" class="nib-gestures"></div>
+        </details>
+      </div>
+    </details>
+
+    <!-- ---------------------------- app ---------------------------- -->
+    <details class="nib-sect" id="sect-app">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">App</span>
+        <span class="nib-sect-hint">screen, handedness</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <span class="lbl">Screen</span>
+        <div class="seg" id="shell-seg" role="group" aria-label="Screen layout">
+          <button type="button" data-shell="auto" class="on">Auto</button>
+          <button type="button" data-shell="phone">Phone</button>
+          <button type="button" data-shell="desktop">Desktop</button>
+        </div>
+        <span class="lbl">Click buttons on the</span>
+        <div class="seg" id="pad-corner" role="group" aria-label="Which side the buttons sit on">
+          <button type="button" data-corner="left">Left</button>
+          <button type="button" data-corner="right" class="on">Right</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- --------------- the dongle's screen: every change applies live --------------- -->
+    <details class="nib-sect" id="sect-dongle">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Dongle screen</span>
+        <span class="nib-sect-hint">screensaver</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <label class="check"><input type="checkbox" id="ss-enable" checked> Screensaver when idle</label>
+        <!-- one button.nib-saver[data-saver] per built-in, names from the
+             firmware catalogue, plus Shuffle (0xFF). .is-on marks the choice. -->
+        <div id="ss-pick" class="nib-savers" role="group" aria-label="Screensaver"></div>
+        <label class="nib-field" for="ss-idle">
+          <span class="lbl">Starts after</span>
+          <select id="ss-idle">
+            <option value="0">Never</option>
+            <option value="15">15 seconds</option>
+            <option value="60" selected>1 minute</option>
+            <option value="300">5 minutes</option>
+            <option value="900">15 minutes</option>
+          </select>
+        </label>
+        <button class="btn wide center" type="button" id="ss-connect" hidden>Connect to preview or import</button>
+        <div id="ss-live">
+          <div class="row wrapped">
+            <button class="btn wide" type="button" id="ss-preview">Preview on the dongle</button>
+            <!-- A real button, because a <label for> pointing at a clipped file
+                 input is still focusable and Tab used to land on nothing. -->
+            <button type="button" class="btn wide" id="ss-file-btn">Import animation</button>
+          </div>
+          <div class="nib-upload">
+            <input type="file" id="ss-file" accept="image/png,image/gif" class="nib-sr"
+                   tabindex="-1" aria-hidden="true">
+            <!-- progress bar: the controller writes --p 0..1 on #ss-progress -->
+            <div id="ss-progress" class="nib-progress" style="--p:0" hidden><i></i></div>
+            <button class="btn danger wide" type="button" id="ss-clear" hidden>Remove imported animation</button>
+          </div>
+        </div>
+        <p class="note" id="ss-note">PNG or GIF, 1-bit, up to 128×64, 16 frames.</p>
+      </div>
+    </details>
+
+    <!-- ------- pairing and security: a form, saved together with a restart ------- -->
+    <details class="nib-sect" id="sect-security">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Pairing &amp; security</span>
+        <span class="nib-sect-hint">name, passkey, who can pair</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body" id="set-form">
+        <p class="note" id="set-note">Connect to edit.</p>
+
+        <label class="nib-field" for="set-name">
+          <span class="lbl">Name</span>
+          <input type="text" id="set-name" maxlength="20" placeholder="N.I.B."
+                 autocapitalize="off" autocorrect="off" spellcheck="false">
+        </label>
+
+        <span class="lbl">Passkey</span>
+        <div class="row">
+          <input type="text" id="set-pk" inputmode="numeric" maxlength="6" placeholder="6 digits"
+                 aria-label="Passkey">
+          <button class="btn" type="button" id="set-pk-random">Randomise</button>
+        </div>
+        <label class="nib-field" for="set-mode">
+          <span class="lbl">New passkey</span>
+          <select id="set-mode">
+            <option value="0">Only when I change it</option>
+            <option value="1">Every power-up</option>
+            <option value="2">After wiping pairings</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" id="set-show" checked> Show passkey on the dongle</label>
+        <p class="note" id="set-show-note">Off: shown only while pairing.</p>
+
+        <label class="nib-field" for="set-pair">
+          <span class="lbl">Who can pair</span>
+          <select id="set-pair">
+            <option value="0">Anyone with the passkey</option>
+            <option value="1">Only during a pairing window</option>
+          </select>
+        </label>
+        <p class="note" id="set-pair-note">Open a window here, or hold the dongle's button 10 s.</p>
+        <button class="btn wide" type="button" id="set-pair-open">Let a new phone pair (2 min)</button>
+
+        <details class="nib-sub">
+          <summary class="nib-link">USB</summary>
+          <label class="nib-field" for="set-usb">
+            <span class="lbl">Serial console</span>
+            <select id="set-usb">
+              <option value="0">On (allows firmware updates)</option>
+              <option value="1">On (no updates)</option>
+              <option value="2">Off</option>
+            </select>
+          </label>
+          <label class="nib-field" for="set-hid">
+            <span class="lbl">USB name</span>
+            <select id="set-hid">
+              <option value="0">Device name</option>
+              <option value="1">"USB Keyboard"</option>
+            </select>
+          </label>
+        </details>
+
+        <!-- Appears only once something above has changed, and stays in reach. -->
+        <div class="nib-savebar" id="set-savebar" hidden>
+          <button class="btn wide" type="button" id="set-save">Save and restart dongle</button>
+        </div>
+      </div>
+    </details>
+
+    <!-- -------------------------- danger zone -------------------------- -->
+    <details class="nib-sect" id="sect-danger">
+      <summary class="nib-sect-head">
+        <span class="nib-sect-title">Reset</span>
+        <span class="nib-sect-hint">wipe pairings</span>
+        <svg class="nib-chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </summary>
+      <div class="nib-sect-body">
+        <button class="btn danger wide" type="button" id="set-forget">Wipe all paired phones</button>
+        <p class="note" id="set-reset-note">Locked out? Hold the dongle's button 30 s to reset it.</p>
+      </div>
+    </details>
+
+    <footer class="nib-about">
+      <p class="note" id="nib-about">Nothing leaves this page except keystrokes and pointer movement.</p>
+      <!-- A phone will happily serve a cached bundle for a day. This forces a
+           real fetch rather than a soft reload that hands back the same files. -->
+      <button id="reload" type="button" class="nib-link">Reload the app</button>
+    </footer>
+
+  </div>
+
+  <!-- Outside the scroller, so a thumb reaches it at any scroll position. The
+       header's close button is still there for a pointer and for AT. -->
+  <div class="nib-drawer-foot">
+    <button id="nib-done" type="button" class="btn wide center">Done</button>
+  </div>
+</aside>
+
+<!-- fullscreen.js injects, at runtime, into document.body:
+       div.fs-root[data-panel][data-corner][data-pad-above]
+         > div.fs-stage > div.fs-slot.fs-slot-pad + div.fs-slot.fs-slot-keys
+         > div.fs-notice
+         > button.fs-corner (contains its own ring + glyph svg)
+     and sets html.fs-open while it is up. It brings its own stylesheet
+     (#nib-fs-styles) built on theme.css tokens; the app stylesheet only
+     needs the html.fs-open rule that hides #nib-chrome. -->
+
+<script type="module" src="app.js?v=12"></script>
+</body>
+</html>

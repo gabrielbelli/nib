@@ -1,0 +1,108 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>N.I.B. Flipper screens</title>
+<style>
+  body { margin: 0; background: #fff; }
+  .screen { display: block; image-rendering: pixelated; }
+</style>
+<body>
+<script>
+// Faithful render of the N.I.B. Flipper main screen (128x64), matching
+// nib.c:nib_main_draw. Amber backlight, black pixels. Scaled up crisply.
+const SCALE = 8;
+const W = 128, H = 64;
+const AMBER = '#ff9200';   // Flipper backlight
+const INK = '#000';
+
+function makeCanvas() {
+  const c = document.createElement('canvas');
+  c.width = W * SCALE; c.height = H * SCALE;
+  c.className = 'screen';
+  c.style.width = (W * SCALE) + 'px';
+  document.body.appendChild(c);
+  const x = c.getContext('2d');
+  x.imageSmoothingEnabled = false;
+  x.scale(SCALE, SCALE);
+  x.fillStyle = AMBER; x.fillRect(0, 0, W, H);
+  return { c, x };
+}
+
+// crude pixel-font helpers using a small sans; good enough for a mock
+function text(x, s, px, cx, cy, align, baseline, color) {
+  x.fillStyle = color;
+  x.font = `${px}px "Helvetica Neue", Arial, sans-serif`;
+  x.textAlign = align; x.textBaseline = baseline;
+  x.fillText(s, cx, cy);
+}
+
+function disc(x, cx, cy, r, color) {
+  x.fillStyle = color; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.fill();
+}
+function ring(x, cx, cy, r, color) {
+  x.strokeStyle = color; x.lineWidth = 1; x.beginPath(); x.arc(cx, cy, r, 0, 7); x.stroke();
+}
+
+// a small button tab like elements_button_left/right
+function tab(x, side, label) {
+  x.font = '7px "Helvetica Neue", Arial, sans-serif';
+  const w = x.measureText(label).width + 12;
+  const bx = side === 'left' ? 0 : W - w;
+  const by = H - 11;
+  x.fillStyle = INK;
+  roundRect(x, bx, by, w, 11, 3); x.fill();
+  text(x, label, 7, bx + w / 2, by + 6, 'center', 'middle', AMBER);
+}
+function roundRect(x, X, Y, w, h, r) {
+  x.beginPath();
+  x.moveTo(X + r, Y); x.arcTo(X + w, Y, X + w, Y + h, r);
+  x.arcTo(X + w, Y + h, X, Y + h, r); x.arcTo(X, Y + h, X, Y, r);
+  x.arcTo(X, Y, X + w, Y, r); x.closePath();
+}
+
+function mark(x) {
+  const cx = [40, 64, 88], letters = ['N', 'I', 'B'];
+  for (let i = 0; i < 3; i++) {
+    disc(x, cx[i], 19, 9, INK);
+    text(x, letters[i], 11, cx[i], 20, 'center', 'middle', AMBER);
+  }
+}
+
+function usb(x, on) {
+  if (on) disc(x, 5, 5, 2, INK); else ring(x, 5, 5, 2, INK);
+  text(x, on ? 'USB' : 'No USB', 7, 11, 8, 'left', 'alphabetic', INK);
+}
+
+function main(id, { usbOn, status, action }) {
+  const { c, x } = makeCanvas();
+  c.id = id;
+  usb(x, usbOn);
+  mark(x);
+  text(x, status, 8, 64, 44, 'center', 'alphabetic', INK);
+  tab(x, 'left', action);
+  tab(x, 'right', 'Settings');
+}
+
+function settings(id, rows, sel) {
+  const { c, x } = makeCanvas();
+  c.id = id;
+  // header bar
+  x.fillStyle = INK; x.fillRect(0, 0, W, 12);
+  text(x, 'Settings', 8, 4, 9, 'left', 'alphabetic', AMBER);
+  let y = 14;
+  rows.forEach((r, i) => {
+    if (i === sel) { x.fillStyle = INK; x.fillRect(0, y, W, 13); }
+    const col = i === sel ? AMBER : INK;
+    text(x, r[0], 8, 4, y + 10, 'left', 'alphabetic', col);
+    if (r[1]) text(x, r[1], 8, W - 4, y + 10, 'right', 'alphabetic', col);
+    y += 14;
+  });
+}
+
+main('ready', { usbOn: true, status: 'Ready', action: 'Pair' });
+main('pairing', { usbOn: true, status: 'Pairing mode', action: 'Cancel' });
+main('connected', { usbOn: true, status: 'Connected', action: 'Disconnect' });
+settings('settings', [['Disguise as keyboard', 'Off'], ['Name', 'NIB'], ['Forget paired phones', '']], 1);
+document.title = 'ready';
+</script>
+</body>
+</html>

@@ -1,0 +1,2808 @@
+/* =============================================================================
+   N.I.B. — theme.css
+   One stylesheet. Phone-first, dark, no framework, no build step, no import,
+   no external font, no network request of any kind.
+
+   THE HARD PROBLEM, STATED HONESTLY
+   `backdrop-filter: blur()` over a UNIFORM field returns that same field, so a
+   naive glass panel over a flat page is literally invisible. That is the whole
+   reason the page is no longer #000: a true-black page gave the blur nothing
+   to eat, drew a hard halo around every pane, and smeared on every pan. The
+   material read comes from four things, only one of which is blur:
+
+     1. BRIGHTNESS. `brightness(1.28)` inside the backdrop filter amplifies
+        whatever faint content is behind the pane, so a 5%-alpha warm wash
+        becomes visible once blurred. `saturate(150%)` drags the warm cast of
+        --accent out of it so the glass reads warm, not grey.
+     2. SOMETHING TO EAT. #nib-stage and #stage-pad are not pure black: they
+        carry --field, a 5% warm wash from the top edge, and #stage-pad::after
+        paints --pad-glow, a soft pool glued to the finger. The material
+        announces itself exactly when the user is touching the screen.
+     3. EDGES. A bright 1px inner edge on the side facing the light, a dark 1px
+        inner edge on the far side, and a low-alpha inner hairline all round.
+        This is the single detail that makes a pane read as glass and not as a
+        grey box.
+     4. INVERTED DEPTH. An outer shadow over a near-black page is invisible,
+        so the near surface is LIGHTER rather than the far surface darker. The
+        ladder, every step measured:
+          page #0b0b0a -> stage #141413 -> glass #111110 over the page and a
+          step above the stage once --glass-boost has it -> solid controls
+          #1c1b1a -> pressed #262523.
+        The only outer shadow that does any work is the warm bloom in
+        --glass-lift-*, which reads as light leaking around a lifted pane.
+
+   FOUR GLASS SURFACES IN THE WHOLE APP. That is the entire list.
+     glass-s  #connect, #nib-menu, #nib-mode, #nib-toast     blur 20px
+     glass-m  #stage-keys (the keyboard shell)               blur 32px
+     glass-l  #nib-drawer                                    blur 40px
+   Nothing else. #stage-pad is content, not chrome. Every keycap, sheet row,
+   input, .btn, the .seg, the progress bar, #nib-echo and #nib-drawer-grab are
+   solid or plain alpha. Two light translucent layers are never stacked: the
+   sheet is glass, so its rows are solid; the keyboard shell is glass, so
+   .osk-key is solid --key-bg. On a desktop the keyboard stops being glass
+   altogether — see §14 for why blur cannot work there.
+
+   WHAT THE CONTROLLERS MUST WRITE (the whole JS/CSS contract)
+     body[data-mode]    pad | keys           — which panel rests on the stage
+     body[data-drawer]  closed | drag | open — kills will-change at rest, and
+                                               decides who may take a tap: the
+                                               ATTRIBUTE gates the sheet's
+                                               pointer-events, never --p, so a
+                                               frozen number cannot blind the
+                                               app (see §5)
+     body[data-conn]    off | wait | on      — the dot in #connect
+     body[data-shell]   phone | desktop      — resolved in JS from a media
+                                               query plus a stored override.
+                                               Drives §14. Never sniffed from a
+                                               user agent string.
+     #nib-drawer  --p   0 closed .. 1 open   — transform and blur radius
+     :root        --p   the same number      — the stage's push-back, which is
+                                               a SIBLING of the sheet and so
+                                               cannot inherit its --p. If --p
+                                               never reaches the root the
+                                               [data-drawer] rules below still
+                                               drive it, only transitioned
+                                               instead of finger-tracked.
+     :root  --vvh / --vvtop                  — visualViewport height and
+                                               offsetTop, re-measured on every
+                                               resize, rotation and soft-
+                                               keyboard event. The sheet is
+                                               sized and positioned from these
+                                               because iOS ignores
+                                               `interactive-widget` and offsets
+                                               the visual viewport instead,
+                                               which leaves fixed layers
+                                               painting in one place and
+                                               hit-testing in another.
+     :root  --mode-travel                    — how far #nib-mode drops in pad
+                                               mode, measured in JS after
+                                               layout. It used to be a
+                                               `calc(100dvh - …)` inside a
+                                               `position:fixed` layer, which
+                                               mixes the layout viewport with
+                                               the dynamic one: they differ by
+                                               the URL bar, by a DIFFERENT
+                                               amount per orientation.
+     #stage-pad   --pad-x / --pad-y          — finger glow, percentages
+     #stage-keys  --osk-rows / --osk-units   — from OSK_METRICS; key size and
+                                               the sideways-scroll threshold
+     #stage-keys  --origin-x / --origin-y    — the mode button's centre, so the
+                                               keyboard scales from the control
+     #nib-mode-ring --p 0..100               — the hold ring, in rAF
+     #ss-progress   --p 0..1                 — upload progress
+     html.fs-open                            — fullscreen.js is up; chrome goes
+
+   Motion lives in motion.js. Springs are for anything a finger can touch;
+   the fixed-duration transitions in this file are only on things a finger
+   cannot grab mid-flight (a <details> opening, a colour, an opacity).
+   ========================================================================== */
+
+:root {
+  /* ===== colour: page and surfaces =========================================
+     NOT OLED black. #000 read as harsh, smeared on every pan, drew a hard
+     halo around each glass pane, and gave backdrop-filter nothing to eat.
+     The page is a warm near-black instead, and the ladder above it kept its
+     old spacing so the near surface is still LIGHTER than the far one.
+     Luminance is WCAG 2.x relative luminance, sRGB; every ratio in this
+     section was recomputed against THIS page, not against black.            */
+  --bg:              #000000;   /* the page AND the stage        L 0.00000   */
+  --surface:         #050504;   /* panes that sit ON the page    L 0.00109   */
+  --surface-2:       #0c0c0b;   /* solid controls at rest        L 0.00332   */
+  --surface-3:       #151413;   /* pressed, active cap, row      L 0.00706   */
+  /* Nothing reads this any more: the sheet is full screen, so there is
+     nothing left behind it to dim, and #nib-scrim was deleted along with the
+     360ms window in which it silently ate every tap. Kept declared because
+     the overlays that capture.js and fullscreen.js inject may still want a
+     dimmer, and a missing token there fails open to a browser default.      */
+  --scrim:           rgb(0 0 0 / 78%);
+
+  /* ===== colour: text ======================================================
+     Measured against --bg first, then against the deepest surface a label may
+     sit on (--surface-3). Both numbers, because a row can be either.        */
+  --text:            #f2f1ed;   /* 17.42:1 on --bg · 13.55:1 on surface-3    */
+  --text-2:          #cdcbc4;   /* 12.13:1 on --bg ·  9.43:1 on surface-3    */
+  --muted:           #9c9b95;   /*  7.07:1 on --bg ·  5.50:1 on surface-3    */
+  /* 4.20:1 on --bg, 3.27:1 on --surface-3. Under 4.5:1 on purpose and
+     correct: WCAG 1.4.3 exempts disabled controls, and nothing else may use
+     this. Lifted from #6e6d68, which would have fallen to 3.80:1 here.      */
+  --text-disabled:   #75746e;
+
+  /* ===== colour: one accent ================================================
+     Warm amber, the single chromatic in the app. Kept low-saturation so it
+     reads as lamplight rather than chrome.                                  */
+  --accent:          #edb872;   /* 10.97:1 on --bg ·  8.53:1 on surface-3    */
+  --accent-rgb:      237 184 114;                /* for derived alphas       */
+  --accent-ink:      #0b0b0a;                    /* 10.97:1 on --accent      */
+  --accent-quiet:    rgb(var(--accent-rgb) / 14%);   /* latched mod fill     */
+  --accent-line:     rgb(var(--accent-rgb) / 45%);   /* tinted hairline      */
+
+  /* ===== colour: connection state ==========================================
+     Status text is 12px, so both clear 4.5:1 with room to spare.            */
+  --ok:              #6fd39b;   /* connected   10.75:1 on --bg · 8.36 on s-3 */
+  --alert:           #ff8f85;   /* destructive  8.93:1 on --bg · 6.94 on s-3 */
+  --alert-rgb:       255 143 133;                /* .btn.danger derives its
+                                                    edge from this, so no
+                                                    literal alert colour is
+                                                    left outside :root       */
+  --wait:            var(--muted);               /* connecting               */
+
+  /* ===== colour: hairlines =================================================
+     Composited over the ladder, --line lands at 1.19–1.27:1 and
+     --line-strong at 1.53–1.68:1: decorative separators, never the sole
+     affordance. --line-control is the one boundary that must be seen, and it
+     now clears WCAG 1.4.11's 3:1 on EVERY step of the ladder instead of only
+     on black — 3.53:1 over --bg, 3.56:1 over --surface, 3.57:1 over
+     --surface-2, 3.46:1 over --surface-3.                                  */
+  --line:            rgb(255 255 255 / 8%);      /* dividers, panel edges    */
+  --line-strong:     rgb(255 255 255 / 16%);     /* decorative grouping only */
+  --line-control:    rgb(255 255 255 / 38%);     /* keycap edge, focused input */
+  --focus:           var(--accent);              /* 10.97:1 focus ring       */
+  --focus-width:     2px;
+  --focus-offset:    2px;
+
+  /* ===== material ==========================================================
+     Five lines, reused by every one of the four glass surfaces. --r is the
+     blur radius and --lift the outer bloom; the .glass-* classes set them.   */
+  /* Composites to #111110 over the page (--text 16.72:1, --muted 6.78:1).
+     Over the stage it is the same colour as the stage, and it is
+     --glass-boost's brightness(1.28) plus --glass-sheen that lift it a step —
+     which is exactly the mechanism described at the top of this file. */
+  --glass-bg:        rgb(8 8 7 / 72%);
+  --glass-sheen:     linear-gradient(180deg,
+                       rgb(255 255 255 / 7%)   0%,
+                       rgb(255 255 255 / 3.5%) 38%,
+                       rgb(255 255 255 / 1.5%) 100%);
+  --glass-boost:     saturate(140%);
+  --glass-blur-s:    20px;
+  --glass-blur-m:    32px;
+  --glass-blur-l:    40px;
+  --glass-edge:      inset 0 0 0 1px rgb(255 255 255 / 7%);
+  --glass-edge-top:  inset 0 1px 0 rgb(255 255 255 / 15%);
+  --glass-edge-bot:  inset 0 -1px 0 rgb(0 0 0 / 55%);
+  /* Depth only, never colour: everything stays black but the elements. */
+  --glass-lift-s:    0 2px 10px -4px rgb(0 0 0 / 90%);
+  --glass-lift-m:    0 -1px 0 rgb(255 255 255 / 5%),
+                     0 -8px 32px -12px rgb(0 0 0 / 90%);
+  --glass-lift-l:    0 -1px 0 rgb(255 255 255 / 6%),
+                     0 24px 64px -24px rgb(0 0 0 / 95%);
+
+  /* What the blur is given to eat. Both are far too faint to read as decor
+     and are exactly bright enough to survive brightness(1.28).              */
+  /* Deliberately almost nothing. Anything stronger lights whole regions, and
+     the page is meant to be black with only the controls lifted off it. */
+  --field:           radial-gradient(130% 90% at 50% 0%,
+                       rgb(var(--accent-rgb) / 2%) 0%, transparent 62%);
+  --pad-glow:        radial-gradient(180px 180px at var(--pad-x, 50%) var(--pad-y, 50%),
+                       rgb(var(--accent-rgb) / 7%) 0%, transparent 70%);
+
+  /* Kept from the previous sheet: the one outer shadow of the old design,
+     still used by the keyboard in fullscreen, where .osk is opaque.         */
+  --edge-top:        inset 0 1px 0 rgb(255 255 255 / 6%);
+  --shadow-sheet:    0 -8px 32px rgb(0 0 0 / 80%);
+
+  /* ===== spacing: 4px base ================================================= */
+  --space-1:         4px;
+  --space-2:         8px;
+  --space-3:         12px;
+  --space-4:         16px;
+  --space-5:         20px;
+  --space-6:         24px;
+  --space-8:         32px;
+  --gutter:          16px;                       /* page side padding        */
+
+  /* ===== touch sizing (phone-first, one thumb) ============================= */
+  --tap:             44px;                       /* hard minimum             */
+  --tap-lg:          52px;                       /* primary actions          */
+  --tap-mode:        56px;                       /* the one gesture control  */
+  --field-h:         44px;
+  --safe-t:          env(safe-area-inset-top, 0px);
+  --safe-r:          env(safe-area-inset-right, 0px);
+  --safe-b:          env(safe-area-inset-bottom, 0px);
+  --safe-l:          env(safe-area-inset-left, 0px);
+  --chrome-t:        calc(var(--safe-t) + 10px); /* the floating top row     */
+
+  /* ===== radius ============================================================ */
+  --radius-sm:       6px;                        /* tags, chips              */
+  --radius-md:       9px;                        /* keycaps, small buttons   */
+  --radius-lg:       13px;                       /* buttons, fields, rows    */
+  --radius-xl:       18px;                       /* panels, trackpad         */
+  --radius-2xl:      24px;                       /* keyboard shell, drawer   */
+  --radius-full:     999px;
+
+  /* ===== type ==============================================================
+     Tracking is size-specific. Large text tightens, body sits near zero,
+     micro text opens up a little so it survives being 12px over glass.      */
+  --font-sans:       -apple-system, BlinkMacSystemFont, "SF Pro Text",
+                     "Segoe UI", system-ui, sans-serif;
+  --font-mono:       ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --text-micro:      12px;                       /* pill, toast, keycap hint */
+  --text-caption:    13px;                       /* notes, hints, echo       */
+  --text-ui:         14px;                       /* buttons, rows            */
+  --text-body:       16px;                       /* inputs — never smaller,  */
+  --text-lead:       18px;                       /* or iOS zooms the field   */
+  --text-title:      22px;                       /* the drawer's one title   */
+  --leading-tight:   1.25;
+  --leading-normal:  1.45;
+  --weight-regular:  400;
+  --weight-medium:   550;
+  --weight-bold:     650;
+  --tracking-tight:  -0.01em;                    /* lead and above           */
+  --tracking-micro:  0.005em;                    /* notes, hints             */
+  --tracking-wide:   0.02em;                     /* micro caps, keycap hints */
+
+  /* ===== motion ============================================================
+     Springs (motion.js) own anything finger-tracked. These are for the rest. */
+  --dur-1:           90ms;                       /* press feedback           */
+  --dur-2:           160ms;                      /* state, colour, chrome    */
+  --dur-3:           260ms;                      /* details, drawer fallback */
+  --ease-out:        cubic-bezier(0.2, 0.8, 0.3, 1);
+  --ease-in-out:     cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-pop:        cubic-bezier(0.22, 1, 0.36, 1);     /* keycap release: quint out, no overshoot */
+  --press-scale:     0.97;
+  --disabled-opacity: 0.45;
+
+  /* ===== on-screen keyboard ================================================
+     osk.js rewrites --osk-rows / --osk-units on #stage-keys at every preset
+     change; the shell sizes its own caps from them.                         */
+  --key-gap:         6px;
+  --key-radius:      var(--radius-md);
+  /* The cap width below which a row stops fitting and scrolls sideways.
+     ONE number serves two jobs that pull opposite ways, so it is viewport-
+     derived rather than fixed: Compact (10 units) MUST fit a 360px phone with
+     no sideways scroll, while 60% / 65% / Full (15, 16, 18.5 units) should not
+     end up with ~25px caps. 8.5vw, floored at 30px and capped at 40px:
+       320px -> 30.0px · 10 units reserve 300px in 312px of shell · fits
+       360px -> 30.6px · 306px in 352px                           · fits
+       390px -> 33.2px · 332px in 374px                           · fits
+       430px -> 36.6px · 366px in 414px                           · fits
+       471px+ -> 40.0px · 400px in 455px+                         · fits
+     A 10-unit row fits at EVERY width, because 0.85·W < W − 16 always holds.
+     It was a flat 30px, which gave the Full preset 24px caps.               */
+  --key-min-w:       clamp(30px, 8.5vw, 40px);
+  --key-h:           46px;                       /* overridden per preset    */
+  /* A row of nothing but utility caps still has to be hittable, so this is
+     --tap and not the old 40px. */
+  --key-h-compact:   min(var(--tap), var(--key-h));   /* never taller than a normal row */
+  --key-bg:          var(--surface-2);
+  --key-bg-down:     var(--surface-3);
+  --key-text:        var(--text);
+  --key-hint:        var(--muted);
+  --key-mod-on-bg:   var(--accent-quiet);
+  --key-mod-on-line: var(--accent-line);
+  --key-mod-on-text: var(--accent);
+  --key-special-bg:  var(--surface);             /* shift, bksp: darker cap  */
+  --kbd-pad:         var(--space-2);
+
+  /* The drawer's progress: declared here so the scrim and the stage, which
+     are siblings of #nib-drawer, have something to read. See the contract. */
+  --p:               0;
+
+  color-scheme: dark;
+}
+
+/* =============================================================================
+   1 · base
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  /* zero alpha derived from a token, so no literal colour leaves :root */
+  -webkit-tap-highlight-color: rgb(var(--accent-rgb) / 0%);
+}
+
+/* The controllers hide and show panels with the attribute, so it has to win
+   over any display this sheet sets. */
+[hidden] { display: none !important; }
+
+html {
+  height: 100%;
+  overflow: hidden;                 /* the app is a fixed surface, not a page */
+  background: var(--bg);
+  -webkit-text-size-adjust: 100%;
+  /* Double-tap and pinch zoom are viewport gestures, so the root decides for
+     every descendant that has no scroll container of its own in between. A
+     zoomed trackpad is a broken trackpad: the fixed layers no longer sit
+     where they are drawn, and iOS keeps the zoom after the sheet closes.
+     Panning stays allowed, so the sheet body and the keyboard rows scroll. */
+  touch-action: pan-x pan-y;
+}
+/* The layers a finger actually lands on say so themselves, so an audit of the
+   computed value on any of them reads "manipulation" rather than "auto".
+   (#stage-pad is none, the keyboard rows are pan-x pan-y, the sheet body
+   is pan-y: those are set where they live.) */
+.nib-chrome,
+.nib-echo,
+.nib-drawer,
+.nib-drawer-head,
+.nib-drawer-foot { touch-action: manipulation; }
+
+body.nib {
+  position: fixed;                  /* no rubber-banding the whole app */
+  inset: 0;
+  margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;        /* kills pull-to-refresh during a drag */
+  touch-action: pan-x pan-y;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-regular);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-quiet);
+  color: var(--text);
+}
+
+/* Focus is never removed, only restyled. */
+:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: var(--focus-offset);
+}
+
+button,
+input,
+textarea,
+select {
+  font-family: inherit;
+}
+
+button {
+  color: var(--text);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+:disabled,
+option:disabled {
+  color: var(--text-disabled);
+  cursor: default;
+}
+
+svg { fill: none; }
+
+/* Every glyph in the markup is a stroked path, so this is the only icon rule. */
+.nib-icon svg,
+.nib-glyph,
+.nib-chev {
+  width: 22px;
+  height: 22px;
+  display: block;
+  stroke: currentColor;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* Announced, never drawn. #status is styled by id because app.js rewrites its
+   className on every status event, which would otherwise reveal it. */
+.nib-sr,
+#status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* =============================================================================
+   2 · the material
+   Five lines, four surfaces, one place to change them.
+   ========================================================================== */
+
+.glass {
+  background: var(--glass-sheen), var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--r, 0px)) var(--glass-boost);
+  backdrop-filter: blur(var(--r, 0px)) var(--glass-boost);
+  box-shadow:
+    var(--glass-edge-top),
+    var(--glass-edge),
+    var(--glass-edge-bot),
+    var(--lift, 0 0 0 0 transparent);
+}
+
+.glass-s { --r: var(--glass-blur-s); --lift: var(--glass-lift-s); }
+.glass-m { --r: var(--glass-blur-m); --lift: var(--glass-lift-m); }
+.glass-l { --r: var(--glass-blur-l); --lift: var(--glass-lift-l); }
+
+/* =============================================================================
+   3 · the stage
+   One grid cell, three occupants. #stage-pad spans every row so the keyboard
+   and the echo float OVER it rather than eating a band of screen — which is
+   also what gives glass-m something to refract.
+   ========================================================================== */
+
+.nib-stage {
+  position: fixed;
+  /* Same split as .nib-chrome: vertical from the visual viewport, horizontal
+     from the layout one. */
+  /* Same 100dvh as .nib-chrome, so the click strip stops above the browser
+     toolbar instead of hiding behind it. */
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;          /* fallback when dvh is unsupported */
+  /* The VISIBLE height, never taller than dvh. A WKWebView host that lays its
+     toolbar over the page without telling the engine (no minimumViewportInset)
+     leaves 100dvh at the full frame, so the bottom row of keys and the click
+     strip sat under the toolbar. visualViewport.height is what is actually on
+     screen; app.js keeps --vvh current on every resize, rotation and scroll.
+     min() guards against an engine that reports it wrong. */
+  height: 100dvh;
+  height: min(var(--vvh, 100dvh), 100dvh);
+  z-index: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr auto auto;   /* pad · echo · keyboard */
+  overflow: hidden;
+  /* The stage is the page. Giving it the warm wash and a lifted surface is
+     what turned the whole screen brown-grey; the glass panes carry their own
+     tint, so they do not need the page to be lit for them. */
+  background: var(--bg);
+  transform: scale(calc(1 - var(--p) * 0.02));
+  transform-origin: 50% 50%;
+  transition: transform var(--dur-3) var(--ease-out);
+}
+/* Tracked 1:1 while a finger is on it; sprung by motion.js on release. */
+body[data-drawer="drag"] .nib-stage { transition: none; }
+/* Safety net: if --p never reaches the root, the state attribute still pushes
+   the stage back, only transitioned instead of finger-tracked. The `closed`
+   half matters just as much: a spring cancelled mid-flight leaves --p frozen
+   around 0.4 and the stage stuck at scale(0.99) forever, which is the frozen
+   layout the user hit after tapping a drag source. The attribute is authority,
+   the number is only the smooth path between two attribute values. */
+body[data-drawer="open"] .nib-stage { transform: scale(0.98); }
+body[data-drawer="closed"] .nib-stage { transform: none; transition: none; }
+
+/* ------------------------------------------------------------------ trackpad
+   Content, not chrome. Solid --surface, no blur, no border. Repeating --field
+   here means the pad keeps its own substrate even while the mode switch is
+   fading it, so the keyboard's glass never has to work over dead black.     */
+#stage-pad {
+  grid-area: 1 / 1 / -1 / 2;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  /* True black: the pad fills the viewport, so anything here is the page
+     colour. --pad-glow under the finger is the only thing that lifts it. */
+  background: var(--bg);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* The finger glow. NO transition on --pad-x / --pad-y: it has to be glued to
+   the contact at 1:1 or it reads as lag. */
+#stage-pad::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--pad-glow);
+  /* Off until a finger is down. It defaults to 50%/50%, so at rest it painted
+     a warm pool in the middle of an otherwise black screen - the single
+     largest thing stopping the page from reading as black. pad.js adds
+     .active for the life of a contact. */
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+#stage-pad.active::after { opacity: 1; }
+
+/* role="application" + tabindex="0" made the pad focusable, and the global
+   focus ring sits OUTSIDE the box — where .nib-stage's overflow:hidden clips
+   it away on a phone, because the pad is flush with every edge. Inset it. */
+#stage-pad:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: -4px;
+}
+
+/* pad.js's own content layer. Styled as content: no glass, no chrome. */
+#stage-pad .pad-layer { z-index: 2; }
+#stage-pad .pad-coach,
+#stage-pad .pad-hud,
+#stage-pad .pad-note,
+#stage-pad .pad-hold {
+  letter-spacing: var(--tracking-micro);
+}
+/* #nib-mode is the one mode control, inside fullscreen and out. pad.js's
+   corner would be a second one in the same corner, so it stays down. */
+#stage-pad .pad-corner { display: none !important; }
+
+/* In keys mode the pad's coaching leaves, its substrate stays. */
+body[data-mode="keys"] #stage-pad { pointer-events: none; }
+body[data-mode="keys"] #stage-pad .pad-layer {
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+/* --------------------------------------------------------------------- echo
+   What was just typed. Mono, muted, one line, never a control.            */
+.nib-echo {
+  grid-area: 2 / 1 / 3 / 2;
+  z-index: 2;
+  /* The box is reserved AT ALL TIMES. Toggling `hidden` grew grid row 2 from 0
+     to ~26px on the frame the echo appeared, which yanked row 3 — the whole
+     keyboard — 26px upward while a finger was already reaching for it. It
+     fades instead; app.js drives opacity from the mode spring and this is the
+     resting state for a controller that only flips the attribute. */
+  min-height: 1.4em;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-out);
+  /* Landscape on a notched phone puts a real inset on the left and the right,
+     and this line had neither. */
+  margin: 0 max(var(--gutter), var(--safe-r)) var(--space-2)
+            max(var(--gutter), var(--safe-l));
+  padding: 0 var(--space-1);
+  /* The tail is what matters, so the line is pinned right and overflows off
+     the left, where a 24px mask fades it out. (`direction: rtl` would do the
+     same job and reorder trailing punctuation while it was at it.) */
+  display: flex;
+  justify-content: flex-end;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: 1.4;
+  color: var(--muted);
+  white-space: nowrap;
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24px);
+  mask-image: linear-gradient(to right, transparent 0, #000 24px);
+  pointer-events: none;
+}
+body[data-mode="keys"] .nib-echo { opacity: 1; }
+
+/* =============================================================================
+   4 · floating chrome
+   Four controls. The container is inert; each control turns pointer events
+   back on. Nothing here is a bar: the stage runs underneath all of it.
+   ========================================================================== */
+
+.nib-chrome {
+  position: fixed;
+  /* Vertically pinned to the VISUAL viewport, because that is what the URL bar
+     and the soft keyboard move. Horizontally pinned to the LAYOUT viewport:
+     visualViewport.width grows past the window whenever the page is scaled, so
+     using it made this box wider than the screen and pushed every right-hand
+     control off the edge. */
+  /* The layout viewport, full stop. --vvh is the VISUAL viewport, which in
+     landscape is shorter than the window, so pinning to it left the controls
+     inside a box shorter than the screen: the click strip fell past its own
+     stage and the mode button landed on top of it. --vvh still governs the
+     drawer, which is the only thing the soft keyboard actually displaces.
+
+     100dvh, not inset:0 and not --vvh. `inset: 0` on a fixed box is the LAYOUT
+     viewport, which on a phone extends underneath the browser's own toolbar,
+     so the bottom row of controls sits behind it. dvh is the viewport as it is
+     right now, toolbar excluded, and it is correct in both orientations. */
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;          /* fallback when dvh is unsupported */
+  /* The VISIBLE height, never taller than dvh. A WKWebView host that lays its
+     toolbar over the page without telling the engine (no minimumViewportInset)
+     leaves 100dvh at the full frame, so the bottom row of keys and the click
+     strip sat under the toolbar. visualViewport.height is what is actually on
+     screen; app.js keeps --vvh current on every resize, rotation and scroll.
+     min() guards against an engine that reports it wrong. */
+  height: 100dvh;
+  height: min(var(--vvh, 100dvh), 100dvh);
+  z-index: 40;
+  pointer-events: none;
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+/* fullscreen.js owns the screen while it is up; two mode buttons is one too
+   many, so the whole chrome layer goes. The override that actually wins lives
+   in §15, at the very END of this file — see the note there. This one is the
+   plain statement of intent. */
+html.fs-open .nib-chrome {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* While the sheet is arriving, the chrome is behind it, so the burger's
+   arrow-into-X transform and the pill both read as blurred ghosts through 40px
+   of glass sitting a pixel under the sheet's own close button. Fade the layer
+   out on the same number the sheet arrives on: one gesture, one motion. */
+.nib-chrome { opacity: clamp(0, calc(1 - var(--p, 0) * 1.6), 1); }
+/* Hard guard: a closed sheet can never dim the controls, whatever --p says. */
+body[data-drawer="closed"] .nib-chrome { opacity: 1; }
+body[data-drawer="closed"] .nib-stage { transform: none; }
+/* Finger-tracked, so no transition to lag behind the drag. */
+body[data-drawer="drag"] .nib-chrome { transition: none; }
+/* The burger is excluded from app.js's setInert() so its close branch is
+   reachable by keyboard and by AT. It cannot be *tapped* through a full-bleed
+   sheet, and it should not be: the sheet carries a close button, a full-width
+   Done button in its footer, the drag and the back gesture. */
+body[data-drawer="open"] .nib-chrome,
+body[data-drawer="drag"] .nib-chrome { z-index: 55; }
+/* Same rule as the stage's: the ATTRIBUTE is the authority and --p is only the
+   smooth path between two of its values, so a spring cancelled mid-flight
+   cannot strand the chrome at 36% opacity with no way back. §15 restates the
+   fullscreen override after this, which is what stops these two rules — both
+   (0,2,1) — from being settled by whichever was typed last. */
+body[data-drawer="closed"] .nib-chrome { opacity: 1; }
+body[data-drawer="open"] .nib-chrome { opacity: 0; }
+/* At opacity 0 the burger is still the topmost hit target (z-index 55, and it
+   is the one chrome child setInert() leaves live so its close branch stays
+   reachable by keyboard and AT). When the visual viewport is offset - the
+   soft keyboard up, or a toolbar animating - the sheet starts below y=0 and
+   the invisible burger owns the strip above it: a tap there closed the sheet
+   with nothing on screen to explain why. Keyboard focus ignores this. */
+body[data-drawer="open"] #nib-menu,
+body[data-drawer="drag"] #nib-menu { pointer-events: none; }
+
+/* The hit box of a round button is the DISC, not the box: WebKit hit-tests
+   border-radius, so a 44px circle answers to only 83% of its own square and a
+   finger 4px inside the corner falls through #nib-chrome (pointer-events:
+   none) to the trackpad, which sends a click to the host. A positioned child
+   is hit-testable outside its parent's rounded corners, so this pseudo makes
+   each control a 52px SQUARE target while the paint stays a circle. The gap
+   between neighbours is --space-2 (8px), so -4px on each side meets exactly
+   and never overlaps. The .nib-ring inside #nib-mode is pointer-events: none
+   and unaffected. */
+#connect::before,
+#nib-menu::before,
+#nib-mode::before {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 0;
+}
+
+/* --------------------------------------------------------- status + connect
+   One control, not two. The dot carries the state, the label carries the
+   action, and the ARIA text stays in #status for app.js.                   */
+.nib-pill {
+  position: absolute;
+  top: var(--chrome-t);
+  /* Third from the left: menu, keyboard, dot. */
+  left: calc(var(--safe-l) + var(--gutter) + 2 * (var(--tap) + var(--space-2)));
+  width: var(--tap);
+  height: var(--tap);
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  pointer-events: auto;
+  transition: transform var(--dur-1) var(--ease-out);
+}
+
+/* The name and the word Connect are gone from the screen. The dot says the
+   same thing in 10px, and the label stays for anything that reads the page
+   aloud. */
+.nib-pill-name,
+.nib-pill-action { display: none; }
+.nib-pill:active { transform: scale(0.94); }
+.nib-pill:disabled { opacity: 0.6; }
+.nib-pill:disabled .nib-pill-action { color: var(--muted); }
+
+.nib-dot {
+  /* State is never colour alone. A hollow ring means not connected and a
+     solid disc means connected, so the control still reads correctly to
+     anyone who cannot separate red from green, and at 11px, where a small
+     warm dot and a small cool dot look much the same to everyone. */
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--alert);
+  color: var(--alert);
+}
+
+body[data-conn="on"] .nib-dot {
+  background: var(--ok);
+  box-shadow: none;
+  color: var(--ok);
+}
+
+body[data-conn="wait"] .nib-dot {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--wait);
+  color: var(--wait);
+  animation: nib-pulse 900ms var(--ease-in-out) infinite alternate;
+}
+/* 900ms alternate is ~0.55Hz, well clear of the 0.2Hz vestibular range. */
+@keyframes nib-pulse {
+  from { opacity: 0.45; }
+  to   { opacity: 1; }
+}
+
+/* Over glass, vibrancy needs contrast the blurred backdrop cannot supply:
+   --text-2 minimum and half a step of weight, never flat grey. */
+.nib-pill-name {
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  letter-spacing: var(--tracking-wide);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+.nib-pill-action {
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  letter-spacing: var(--tracking-wide);
+  font-weight: var(--weight-bold);
+  color: var(--accent);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body[data-conn="on"] .nib-pill-action { color: var(--text-2); }
+
+/* ------------------------------------------------------------------- menu */
+.nib-icon {
+  display: grid;
+  place-items: center;
+  width: var(--tap);
+  height: var(--tap);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  color: var(--text-2);
+  pointer-events: auto;
+  transition: transform var(--dur-1) var(--ease-out),
+              color var(--dur-2) var(--ease-out);
+}
+.nib-icon:active { transform: scale(0.94); }
+
+#nib-menu {
+  position: absolute;
+  top: var(--chrome-t);
+  left: calc(var(--safe-l) + var(--gutter));
+  /* `translate` is a separate property from `transform`, so the :active
+     press scale composes with this instead of wiping it. */
+  translate: 0 0;
+  transition: transform var(--dur-1) var(--ease-out);
+}
+/* In keys mode the mode button joins it at the top right, so it steps aside
+   and lines its centre up with the taller control. */
+
+.nib-burger {
+  display: grid;
+  gap: 4px;
+  width: 17px;
+}
+.nib-burger i {
+  display: block;
+  height: 1.5px;
+  border-radius: 1px;
+  background: currentColor;
+  transition: transform var(--dur-2) var(--ease-out),
+              opacity var(--dur-2) var(--ease-out);
+}
+/* The drawer has its own close button, but while the burger is still visible
+   it should say what it does now. */
+#nib-menu[aria-expanded="true"] { color: var(--accent); }
+#nib-menu[aria-expanded="true"] .nib-burger i:first-child { transform: translateY(5.5px) rotate(45deg); }
+#nib-menu[aria-expanded="true"] .nib-burger i:nth-child(2) { opacity: 0; }
+#nib-menu[aria-expanded="true"] .nib-burger i:last-child { transform: translateY(-5.5px) rotate(-45deg); }
+
+/* -------------------------------------------------------------- mode switch
+   Tap swaps the panel, hold enters full screen. It mirrors .fs-corner: bottom
+   right over the pad, top right over the keyboard, which is the only corner
+   the keyboard does not own. The travel between the two is animated, because
+   the finger is often still on the control when the mode changes.          */
+.nib-mode {
+  position: absolute;
+  top: var(--chrome-t);
+  /* Left of the hamburger, in the same top row. It used to live in the bottom
+     corner, where it sat on the trackpad's right-hand click zone and one
+     corner answered to two different things. Up here it cannot collide with
+     anything, and the measured --mode-travel it needed is gone with it. */
+  left: calc(var(--safe-l) + var(--gutter) + var(--tap) + var(--space-2));
+  width: var(--tap);
+  height: var(--tap);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  color: var(--text);
+  pointer-events: auto;
+  transition: transform var(--dur-1) var(--ease-out);
+}
+.nib-mode:active { transform: scale(0.92); }
+
+/* The touch router presses by hand when the engine targets the wrong button:
+   the one under the finger gets the press, the engine's pick is held still. */
+.nib-icon.is-pressed,
+.nib-pill.is-pressed { transform: scale(0.94); }
+.nib-mode.is-pressed { transform: scale(0.92); }
+.is-phantom:active,
+.is-phantom:active .nib-sect-title { transform: none !important; color: inherit; }
+
+.nib-mode .nib-glyph { width: 22px; height: 22px; }
+body[data-mode="pad"]  .nib-glyph-pad  { display: none; }
+body[data-mode="keys"] .nib-glyph-keys { display: none; }
+
+/* The hold ring. A conic sweep masked to a 3px annulus, so it never punches a
+   dark disc into the glass the way an inset background would. --p is 0..100,
+   written per frame; at 0 the gradient is fully transparent and the opacity
+   clamp takes the ring out of the compositor entirely. */
+.nib-ring {
+  /* Its own --p, shadowing the drawer's inherited one. The controller writes
+     this element's --p inline, which still wins over this declaration. */
+  --p: 0;
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--radius-full);
+  pointer-events: none;
+  opacity: clamp(0, var(--p, 0), 1);
+  background: conic-gradient(from -90deg,
+    var(--accent) calc(var(--p, 0) * 1%), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 3px));
+}
+
+/* ------------------------------------------------------------------ toast
+   Slides from the top edge and leaves to the top edge. It sits below the
+   pill row rather than over it, and is the quietest thing on screen.      */
+.nib-toast {
+  position: absolute;
+  top: calc(var(--chrome-t) + var(--tap) + var(--space-2));
+  left: 50%;
+  translate: -50% 0;
+  max-width: min(78vw, 340px);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  font-size: var(--text-micro);
+  line-height: 1.2;
+  letter-spacing: var(--tracking-wide);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* motion.js springs this in and out; the class is the resting off state so a
+   controller that only toggles a class still works. */
+.nib-toast.is-out {
+  opacity: 0;
+  translate: -50% -8px;
+  scale: 0.96;
+}
+
+/* In keys mode the mode button joins the top-right corner at --tap-mode tall
+   while the toast sits at --chrome-t + --tap + 8: they overlap by ~29px on a
+   390px phone, and #nib-toast comes after #nib-mode in the DOM so the toast
+   wins the paint and covers the one gesture control in the app. Rather than
+   move the toast down into the keyboard, give it the column that is actually
+   free — the same technique fullscreen.js uses for .fs-notice. */
+body[data-mode="keys"] .nib-toast {
+  left: calc(var(--safe-l) + var(--gutter));
+  right: calc(var(--safe-r) + var(--gutter) + var(--tap-mode) + var(--space-4));
+  translate: 0 0;
+  max-width: none;
+  text-align: left;
+}
+/* .is-out is (0,2,0) and the rule above is (0,2,1), so the off state has to be
+   restated here or the toast would stop leaving upward in keys mode. */
+body[data-mode="keys"] .nib-toast.is-out { translate: 0 -8px; }
+
+/* =============================================================================
+   5 · the sheet
+   Full screen, not a 420px side pane, and there is nothing beside it any more.
+
+   WHAT WENT WITH THE SIDE PANE, and why every one of them was a real bug:
+     · #nib-scrim. An invisible full-screen layer at z-index 50 that stayed
+       mounted and kept taking pointer events for the whole close animation, so
+       the first tap after every close went nowhere. It was also painted OVER
+       the burger it was meant to leave reachable.
+     · #nib-edge. A 24px strip down the right of the screen that existed only
+       to start the open drag. Over the pad it stole the right edge of the
+       trackpad; in keys mode it sat on top of Backspace, Enter and the right
+       arrow. The burger is 44px and is already where the thumb is.
+     · The `min(420px, 92vw)` width, and with it every bug that came from a
+       drawer width that changes on rotation while a spring is in flight. The
+       sheet is now exactly the viewport, so W has nothing left to drift to.
+     · `html.fs-open .nib-edge`, which tied with a later rule on specificity
+       and lost on source order — see §15 for how that class of trap is now
+       settled deliberately rather than by accident.
+   ========================================================================== */
+
+.nib-drawer {
+  position: fixed;
+  /* --vvtop / --vvh are the VISUAL viewport, re-measured by app.js. iOS
+     ignores the `interactive-widget` hint, so it answers a focus near the
+     bottom of the screen by offsetting the visual viewport instead of
+     resizing the layout one — and `position: fixed` layers do not follow.
+     That is literally "paints in one place, hit-tests in another", and on iOS
+     the offset can outlive the keyboard that caused it. Taking both numbers
+     from visualViewport pins the sheet to what the user can actually see.
+     The fallback is dvh and never vh: 100vh is the viewport at its TALLEST,
+     so with the URL bar showing, 100vh pushes the footer — the Done button —
+     off the bottom of the screen. */
+  top: var(--vvtop, 0px);
+  left: 0;
+  z-index: 60;
+  width: 100%;
+  max-width: none;
+  height: var(--vvh, 100dvh);
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+  /* Enters and leaves along the same path, and that path starts at the button
+     that opens it. The hamburger is on the left, so the sheet arrives from the
+     left; arriving from the opposite side reads as coming from nowhere. */
+  transform: translate3d(calc((var(--p) - 1) * 100%), 0, 0);
+  /* The blur radius grows as it arrives, so the pane materialises rather
+     than fades. Overrides .glass-l's --r on purpose. */
+  --r: calc(24px + var(--p) * 16px);
+  /* Full bleed, so the light comes from the top edge like every other pane;
+     there is no leading edge left to put a hairline down. At full-screen size
+     a translucent tint reads as a grey wash rather than a material, so this
+     pane is near-solid black and lets its edges and its content carry it. */
+  --glass-bg: rgb(2 2 2 / 94%);
+  --glass-edge-top: inset 0 1px 0 rgb(255 255 255 / 10%);
+  --glass-edge-bot: inset 0 -1px 0 rgb(0 0 0 / 55%);
+  /* THE ATTRIBUTE DECIDES WHO IS LIVE, NEVER --p. A spring cancelled by a tap
+     leaves --p frozen part-way; under prefers-reduced-motion the pane is
+     transparent rather than translated. In both cases a full-screen pane the
+     user cannot see was still taking every tap, and the only way out was a
+     reload. Now an invisible sheet is also an intangible one. */
+  pointer-events: none;
+}
+body[data-drawer="open"] .nib-drawer,
+body[data-drawer="drag"] .nib-drawer { pointer-events: auto; }
+body[data-drawer="drag"] .nib-drawer { will-change: transform; }
+
+/* The drag handle. It used to run the FULL height of the leading edge with
+   touch-action: none, which silently killed vertical scrolling down the whole
+   left 22px of the sheet — and on a full-screen sheet that is a long way to
+   drag a thumb and have nothing happen. It is one --tap-lg handle at the top
+   now, and it sits INSIDE the safe area: at top: 0 on a notched phone the
+   whole thing lived under the status bar, and in landscape it lived under the
+   notch itself. */
+.nib-drawer-grab {
+  position: absolute;
+  top: max(var(--safe-t), var(--space-1));
+  left: var(--safe-l);
+  width: var(--tap);
+  height: var(--tap-lg);
+  z-index: 3;
+  touch-action: none;
+  cursor: grab;
+}
+.nib-drawer-grab::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 9px;
+  width: 3px;
+  height: 28px;
+  margin-top: -14px;
+  border-radius: var(--radius-full);
+  background: var(--line-strong);
+}
+
+/* -------------------------------------------------------------- sheet head
+   Part of the sheet's glass. The body scrolls UNDER it, and where they meet
+   there is no 1px line — a 16px gradient fades in instead.
+
+   Both horizontal insets are new. This sheet had --safe-t and --safe-b and
+   nothing sideways, and in landscape on a notched phone --safe-r is around
+   44px — which is exactly where the close button, every <select> chevron and
+   the Randomise button sit. `max()` and not `+`, so an unnotched phone keeps
+   the design's own padding rather than losing it to a 0px inset.           */
+.nib-drawer-head {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: calc(var(--safe-t) + var(--space-5))
+           max(var(--space-4), var(--safe-r))
+           var(--space-3)
+           max(calc(var(--space-5) + var(--space-1)), var(--safe-l));
+}
+.nib-drawer-head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  height: 16px;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(to bottom, rgb(0 0 0 / 45%), transparent);
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+.nib-drawer.is-scrolled .nib-drawer-head::after { opacity: 1; }
+
+.nib-drawer-title {
+  grid-column: 1;
+  margin: 0;
+  font-size: var(--text-title);
+  line-height: 1.15;
+  letter-spacing: var(--tracking-tight);
+  font-weight: var(--weight-bold);
+  color: var(--text);
+}
+.nib-drawer-sub {
+  grid-column: 1;
+  margin: 2px 0 0;
+  font-size: var(--text-caption);
+  line-height: 1.35;
+  letter-spacing: var(--tracking-micro);
+  color: var(--muted);
+}
+body[data-conn="on"] .nib-drawer-sub { color: var(--ok); }
+
+/* Plain, because it sits on glass that is already carrying edges. */
+.nib-icon-plain {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  color: var(--muted);
+}
+.nib-icon-plain:active { color: var(--text); }
+
+/* -------------------------------------------------------------- sheet body */
+.nib-drawer-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;              /* scroll, never zoom, on the note text */
+  /* --safe-b belongs to .nib-drawer-foot now: the footer is outside this
+     scroller, so paying the home-indicator inset here too would have counted
+     it twice and left a dead band above the Done button. */
+  padding: var(--space-2)
+           max(var(--space-4), var(--safe-r))
+           var(--space-8)
+           max(calc(var(--space-5) + var(--space-1)), var(--safe-l));
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The footer had no rule at all, so it shared space with the scroller and the
+   Done button sat on top of the last item in the list. It owns a band of its
+   own now, and the home-indicator inset with it. */
+/* A scroll edge, not a divider. A half-cut row at the fold reads as broken
+   unless something says there is more below it. */
+.nib-drawer-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+}
+
+.nib-drawer-foot {
+  flex: 0 0 auto;
+  padding: var(--space-3)
+           max(var(--space-4), var(--safe-r))
+           calc(var(--space-3) + var(--safe-b))
+           max(var(--space-4), var(--safe-l));
+  background: var(--bg);
+  border-top: 1px solid var(--line);
+}
+
+/* ------------------------------------------------------------- sheet footer
+   OUTSIDE the scroller, on purpose. On a full-screen sheet the close button in
+   the top right corner is not reachable one-handed at all, and it certainly is
+   not reachable from the bottom of a long scroll. One full-width target that
+   is always exactly where the thumb already is. The header's close button
+   stays for a pointer and for assistive tech.                              */
+/* A scroll edge, not a divider. A half-cut row at the fold reads as broken
+   unless something says there is more below it. */
+.nib-drawer-body {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 28px), transparent 100%);
+}
+
+.nib-drawer-foot {
+  flex: 0 0 auto;
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-3)
+           max(var(--space-4), var(--safe-r))
+           max(var(--safe-b), var(--space-4))
+           max(calc(var(--space-5) + var(--space-1)), var(--safe-l));
+  border-top: 1px solid var(--line);
+  /* The list scrolls under it, so it needs the same "something is behind this"
+     cue the head has, only pointing the other way. */
+  background: linear-gradient(to top, rgb(0 0 0 / 22%), transparent);
+}
+.nib-drawer-foot > .btn {
+  flex: 1 1 auto;
+  min-height: var(--tap-lg);
+}
+
+/* The common path, above the sections: the one setting that breaks typing if
+   it is wrong, and the one button that unsticks a jammed modifier. */
+.nib-quick {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-bottom: var(--space-4);
+}
+
+/* Inset grouped list: one surface, hairlines between rows, the label on the
+   left and its value on the right. Sliders sit under their own row. */
+.nib-group {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.nib-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  column-gap: var(--space-3);
+  min-height: var(--tap-lg);
+  padding: 0 var(--space-3) 0 var(--space-4);
+}
+.nib-row + .nib-row { border-top: 1px solid var(--line); }
+.nib-row-label { color: var(--text); font-size: var(--text-body); }
+.nib-row-value {
+  color: var(--muted);
+  font-size: var(--text-body);
+  font-variant-numeric: tabular-nums;
+}
+.nib-row-select {
+  width: auto;
+  min-height: 0;
+  padding: var(--space-2) calc(var(--space-3) + 18px) var(--space-2) var(--space-2);
+  background-color: transparent;
+  border: 0;
+  box-shadow: none;
+  outline-offset: 2px;
+  color: var(--muted);
+  text-align: right;
+  text-align-last: right;
+}
+.nib-row-range { padding-top: var(--space-3); padding-bottom: var(--space-2); row-gap: var(--space-1); }
+.nib-row-range > input[type="range"] { grid-column: 1 / -1; }
+
+.nib-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-2); }
+.nib-pair-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--tap);
+  color: var(--text-2);
+}
+.nib-pair-btn svg {
+  width: 18px; height: 18px;
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+/* =============================================================================
+   6 · drawer sections
+   Advanced things one level deeper, not everything behind one button.
+   ========================================================================== */
+
+.nib-sect {
+  border-top: 1px solid var(--line);
+}
+.nib-sect-head {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  min-height: var(--tap-lg);
+  padding: var(--space-2) 0;
+  list-style: none;
+  cursor: pointer;
+}
+summary { list-style: none; cursor: pointer; }
+summary::-webkit-details-marker { display: none; }
+.nib-sect-head:active .nib-sect-title { color: var(--accent); }
+
+.nib-sect-title {
+  grid-column: 1;
+  font-size: 16px;
+  line-height: 1.3;
+  letter-spacing: 0;
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+.nib-sect-hint {
+  grid-column: 1;
+  grid-row: 2;
+  font-size: var(--text-caption);
+  line-height: 1.45;
+  letter-spacing: var(--tracking-micro);
+  color: var(--muted);
+}
+.nib-chev {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
+  transition: transform var(--dur-3) var(--ease-out);
+}
+.nib-sect[open] > .nib-sect-head .nib-chev { transform: rotate(90deg); }
+
+.nib-sect-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-1) 0 var(--space-5);
+}
+
+/* A <details> is not finger-tracked, so a real transition is honest here. */
+@supports (interpolate-size: allow-keywords) {
+  :root { interpolate-size: allow-keywords; }
+}
+@supports selector(::details-content) {
+  .nib-sect::details-content {
+    block-size: 0;
+    overflow: hidden;
+    transition: block-size var(--dur-3) var(--ease-out),
+                content-visibility var(--dur-3) allow-discrete;
+  }
+  .nib-sect[open]::details-content { block-size: auto; }
+}
+/* Engines without ::details-content get the reveal, not the collapse. */
+@supports not selector(::details-content) {
+  .nib-sect[open] > .nib-sect-body {
+    animation: nib-reveal var(--dur-3) var(--ease-out) both;
+  }
+}
+@keyframes nib-reveal {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* =============================================================================
+   7 · solid controls
+   Everything in this section sits on glass, so everything here is opaque and
+   leans on --line-control for its shape. Never a second translucent layer.
+   ========================================================================== */
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.row.wrapped { flex-wrap: wrap; }
+
+.btn {
+  flex: 0 0 auto;
+  min-height: var(--tap);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--edge-top);
+  color: var(--text);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  text-align: center;
+  transition: background-color var(--dur-1) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+.btn:active {
+  background: var(--surface-3);
+  transform: scale(var(--press-scale));
+}
+.btn.wide { flex: 1 1 auto; }
+.btn.center { justify-content: center; text-align: center; }
+/* Small in ink, never in target. This was min-height: 36px, and app.js builds
+   a 36px Edit and a 36px destructive Delete side by side in every snippet row —
+   the two most misfireable buttons in the app were the two smallest. The sheet
+   declares --tap: 44px as a hard minimum, so it is one here too; only the
+   padding and the type shrink. */
+.btn.small {
+  min-height: var(--tap);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-caption);
+}
+
+.btn.mod {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: var(--text-caption);
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-2);
+}
+/* Armed for the next keystroke: tinted fill, tinted edge, tinted glyph — all
+   three, so the state survives a viewer who cannot separate amber from grey. */
+.btn.mod.on {
+  background: var(--accent-quiet);
+  border-color: var(--accent-line);
+  color: var(--accent);
+}
+/* Latched until cleared: solid edge, heavier glyph, and a dot. */
+.btn.mod.on.latched {
+  border-color: var(--accent);
+  font-weight: var(--weight-bold);
+}
+.btn.mod.on.latched::after {
+  content: "";
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.btn.danger {
+  /* Derived, not retyped: this was a literal copy of --alert that would have
+     quietly stopped matching the token the first time --alert moved. */
+  border-color: rgb(var(--alert-rgb) / 45%);
+  color: var(--alert);
+}
+.btn.danger:active { background: var(--surface-3); }
+
+.btn:disabled {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--text-disabled);
+  transform: none;
+}
+
+/* ---------------------------------------------------------------- fields
+   16px minimum on anything typable, or iOS Safari zooms the viewport.      */
+.nib-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.nib-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+}
+.nib-field-inline > .lbl { flex: 0 0 auto; }
+.nib-field-inline > select { flex: 1 1 auto; width: auto; }
+
+.lbl {
+  font-size: var(--text-caption);
+  line-height: 1.45;
+  letter-spacing: var(--tracking-micro);
+  color: var(--muted);
+}
+
+.note {
+  margin: 0;
+  font-size: var(--text-caption);
+  line-height: 1.45;
+  letter-spacing: var(--tracking-micro);
+  color: var(--muted);
+}
+
+input[type="text"],
+input[type="password"],
+textarea,
+select {
+  width: 100%;
+  min-height: var(--field-h);
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--edge-top);
+  color: var(--text);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  transition: border-color var(--dur-2) var(--ease-out),
+              background-color var(--dur-2) var(--ease-out);
+}
+input[type="text"]:focus,
+input[type="password"]:focus,
+textarea:focus,
+select:focus {
+  background: var(--surface-3);
+  border-color: var(--accent-line);
+}
+input::placeholder,
+textarea::placeholder { color: var(--muted); }
+textarea { resize: vertical; }
+
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  padding-right: var(--space-8);
+  /* Stripping the native chevron left no affordance, so draw one. A data URI
+     cannot read a custom property, so %239c9b95 is --muted written out by
+     hand: if --muted ever moves, this moves with it or the chevron drifts off
+     the palette. It is restated under prefers-contrast in §12 for the same
+     reason. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%239c9b95' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--space-3) center;
+}
+
+#pwform {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin: 0;
+}
+#pwform input { flex: 1 1 auto; }
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap);
+  font-size: var(--text-ui);
+  color: var(--text-2);
+}
+.check input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: var(--space-5);
+  height: var(--space-5);
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+/* ---------------------------------------------------------------- range
+   44px of touch height around a 4px track: the target is the row, not the
+   4px line. The thumb is the one control that may carry the accent.       */
+input[type="range"] {
+  width: 100%;
+  height: var(--tap);
+  margin: 0;
+  padding: 0;
+  background: none;
+  appearance: none;
+  -webkit-appearance: none;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  box-shadow: var(--edge-top);
+}
+input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 26px;
+  height: 26px;
+  margin-top: -11px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  box-shadow: 0 1px 6px -2px rgb(0 0 0 / 90%);
+}
+input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+/* ------------------------------------------------------- segmented control
+   Its boundary is what identifies it, so it uses --line-control.          */
+.seg {
+  display: flex;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  background: var(--surface);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-lg);
+}
+.seg button {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--tap);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-2) var(--space-3);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);        /* nested corner steps down */
+  color: var(--muted);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-medium);
+  white-space: nowrap;
+  transition: background-color var(--dur-2) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out);
+}
+.seg button:active { background: var(--surface-2); }
+.seg button.on {
+  background: var(--surface-2);
+  border-color: var(--line-control);
+  box-shadow: var(--edge-top);
+  color: var(--accent);
+  font-weight: var(--weight-bold);
+}
+
+/* =============================================================================
+   8 · the drawer's own row types
+   ========================================================================== */
+
+/* ------------------------------------------------------ keyboard presets */
+.nib-presets {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--space-2);
+}
+.nib-preset {
+  min-height: var(--tap-lg);
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--edge-top);
+  text-align: left;
+  transition: background-color var(--dur-1) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+.nib-preset:active {
+  background: var(--surface-3);
+  transform: scale(var(--press-scale));
+}
+.nib-preset-label {
+  font-size: var(--text-ui);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+}
+.nib-preset-hint,
+.nib-preset-metric {
+  font-size: var(--text-micro);
+  line-height: 1.3;
+  letter-spacing: var(--tracking-micro);
+  color: var(--muted);
+}
+.nib-preset-metric { font-variant-numeric: tabular-nums; }
+.nib-preset.is-on,
+.nib-preset[aria-pressed="true"] {
+  background: var(--accent-quiet);
+  border-color: var(--accent);
+}
+.nib-preset.is-on .nib-preset-label,
+.nib-preset[aria-pressed="true"] .nib-preset-label {
+  color: var(--accent);
+  font-weight: var(--weight-bold);
+}
+
+/* -------------------------------------------------------------- screensavers */
+.nib-savers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-2);
+}
+@media (min-width: 520px) {
+  .nib-savers { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+/* A saver is a picture of itself: a frame rendered from the firmware, at the
+   panel's 2:1, with its name under it. The selection is the accent ring. */
+.nib-saver {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--muted);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  text-align: left;
+  transition: color var(--dur-2) var(--ease-out),
+              transform var(--dur-1) var(--ease-out);
+}
+.nib-saver-shot {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 2 / 1;
+  border-radius: var(--radius-md);
+  background: #000;
+  outline: 1px solid var(--line-control);
+  outline-offset: 0;
+  overflow: hidden;
+  color: var(--muted);
+  transition: outline-color var(--dur-2) var(--ease-out),
+              outline-width var(--dur-1) var(--ease-out);
+}
+.nib-saver-shot img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  image-rendering: pixelated;
+}
+.nib-saver-shot svg { width: 22px; height: 22px; }
+.nib-saver-name { padding-left: 2px; }
+.nib-saver:active { transform: scale(var(--press-scale)); }
+.nib-saver.is-on { color: var(--accent); font-weight: var(--weight-bold); }
+.nib-saver.is-on .nib-saver-shot { outline: 2px solid var(--accent); outline-offset: 2px; }
+.nib-saver:disabled { opacity: 0.45; }
+
+/* ------------------------------------------------------------ upload + bar */
+.nib-upload {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.nib-progress {
+  --p: 0;                            /* shadows the drawer's --p, as above */
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-3);
+  box-shadow: var(--edge-top);
+  overflow: hidden;
+}
+.nib-progress > i {
+  display: block;
+  height: 100%;
+  width: calc(var(--p, 0) * 100%);
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+/* ---------------------------------------------------------------- gestures
+   A reference list, not a control: no borders, no targets, just the mapping. */
+.nib-gestures {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.nib-gesture {
+  display: grid;
+  grid-template-columns: minmax(96px, auto) 1fr;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-top: 1px solid var(--line);
+}
+.nib-gesture:first-child { border-top: 0; }
+.nib-gesture-do {
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  color: var(--text-2);
+}
+.nib-gesture-help {
+  font-size: var(--text-caption);
+  line-height: 1.45;
+  letter-spacing: var(--tracking-micro);
+  color: var(--muted);
+}
+
+/* =============================================================================
+   9 · snippets
+   One primary target per row: the row types the snippet. Class names here are
+   a hard contract with app.js renderSnippets().
+   ========================================================================== */
+
+.snips {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.snip {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--tap-lg);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--edge-top);
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+.snip:active { background: var(--surface-3); }
+.snip .meta {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.snip .name {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-medium);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snip .peek {
+  font-size: var(--text-micro);
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.snip .tag {
+  flex: 0 0 auto;
+  padding: 0 var(--space-1);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-micro);
+  color: var(--muted);
+  letter-spacing: var(--tracking-wide);
+}
+.snip .btn { flex: 0 0 auto; }
+
+.empty {
+  margin: 0;
+  padding: var(--space-6) 0;
+  text-align: center;
+  font-size: var(--text-caption);
+  color: var(--muted);
+}
+
+.center { text-align: center; }
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+}
+#snip-editor[open] > .editor {
+  animation: nib-reveal var(--dur-3) var(--ease-out) both;
+}
+
+/* =============================================================================
+   10 · the keyboard
+   #stage-keys is the glass shell (glass-m). Everything inside it is solid,
+   because two light translucent layers never stack. The shell floats over the
+   trackpad: content runs under the chrome instead of losing a band of screen.
+   ========================================================================== */
+
+.nib-keys {
+  grid-area: 3 / 1 / 4 / 2;
+  z-index: 3;
+  position: relative;
+  /* Defaults; osk.js rewrites both from OSK_METRICS on every preset change. */
+  --osk-rows: 4;
+  --osk-units: 10;
+  /* Row height falls out of the row count, so a 6-row preset does not push
+     the shell off a short phone and a 4-row preset stays comfortable. The
+     floor is --tap and not the old 40px: a keycap is a target like any other,
+     and in portrait the clamp lands on its 52px ceiling anyway — the floor
+     only ever bites on a short screen, which is precisely where it matters.
+     dvh and never vh: with the URL bar showing, 46vh is more than 46% of the
+     window and the shell grows past the bottom of the screen. */
+  --key-h: clamp(var(--tap),
+             calc((46dvh - var(--osk-rows) * var(--key-gap)) / var(--osk-rows)),
+             52px);
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+  /* the keyboard is a big surface, so its bright edge is quieter than a chip's */
+  --glass-edge-top: inset 0 1px 0 rgb(255 255 255 / 12%);
+  --glass-edge-bot: inset 0 -1px 0 rgb(0 0 0 / 40%);
+  /* it materialises FROM the mode button, not from its own centre */
+  transform-origin: var(--origin-x, 88%) var(--origin-y, 0%);
+}
+
+/* Scroll edge, not a divider: a 20px gradient where the shell meets the pad. */
+.nib-keys::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 20px;
+  pointer-events: none;
+  background: linear-gradient(to top, rgb(0 0 0 / 40%), transparent);
+}
+
+.osk {
+  display: flex;
+  flex-direction: column;
+  gap: var(--key-gap);
+  padding: var(--kbd-pad) max(var(--kbd-pad), var(--safe-r))
+           max(var(--kbd-pad), var(--safe-b))
+           max(var(--kbd-pad), var(--safe-l));
+  /* A preset wider than the phone scrolls sideways inside the shell. The page
+     itself never scrolls horizontally. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  /* Both axes, not just x: with a max-height in play on a short screen (§11)
+     a vertical flick must not chain out to the page behind the keyboard. */
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: pan-x;
+  /* Standalone (fullscreen.js moves .osk into .fs-slot-keys, where there is no
+     glass shell around it) it carries its own ground. */
+  background: var(--bg);
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
+}
+.osk::-webkit-scrollbar { display: none; }
+
+/* Inside the glass shell it is a transparent frame, never a second layer. */
+.nib-keys > .osk {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  border-radius: inherit;
+}
+
+.osk-row {
+  --row-h: var(--key-h);
+  display: flex;
+  align-items: stretch;
+  gap: var(--key-gap);
+  /* Every row reserves the same width, so the columns stay aligned while the
+     shell scrolls. --key-min-w is viewport-derived so that this product can
+     never exceed the shell for a 10-unit preset — the arithmetic, at every
+     width that matters, is written out where the token is declared. */
+  min-width: calc(var(--osk-units, 10) * var(--key-min-w));
+}
+/* a row of nothing but utility keys (home/end/pgup/pgdn) rides lower */
+.osk-row:not(:has(.osk-key:not(.ghost))) { --row-h: var(--key-h-compact); }
+
+/* A preset spacer. Reserves its units and does nothing else. */
+.osk-gap {
+  flex: 1 1 0;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.osk-key {
+  /* flex-basis 0 with equal grow is what keeps ten columns inside 360px: the
+     caps share whatever the fixed gaps leave, so a row cannot overflow.
+     osk.js writes flex-grow inline from the preset's unit width. */
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--row-h, var(--key-h));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-1);
+  background: var(--key-bg);
+  border: 1px solid var(--line-control);   /* the edge is the affordance */
+  border-radius: var(--key-radius);
+  box-shadow: var(--edge-top);
+  color: var(--key-text);
+  font-size: var(--text-body);
+  font-weight: var(--weight-medium);
+  line-height: var(--leading-tight);
+  text-align: center;
+  overflow: hidden;
+  transition: background-color var(--dur-1) var(--ease-out),
+              border-color var(--dur-2) var(--ease-out),
+              color var(--dur-2) var(--ease-out),
+              transform var(--dur-1) var(--ease-pop);
+}
+/* osk.js fires this on pointerdown and preventDefaults, so the phone's own
+   keyboard never opens over the drawn one. No click handler anywhere. */
+.osk-key.word {
+  font-size: var(--text-caption);
+  letter-spacing: -0.01em;
+}
+.osk-key:active {
+  background: var(--key-bg-down);
+  transform: scale(var(--press-scale));
+}
+
+/* secondary glyph printed on the cap */
+.osk-key > span {
+  font-size: var(--text-micro);
+  font-weight: var(--weight-regular);
+  letter-spacing: var(--tracking-wide);
+  color: var(--key-hint);
+}
+
+.osk-key.wide  { flex-grow: 2; }
+.osk-key.xwide { flex-grow: 5; }
+
+/* shift, backspace, enter: darker caps that recede behind the letters */
+.osk-key.wide,
+.osk-key.xwide {
+  background: var(--key-special-bg);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-regular);
+  color: var(--text-2);
+}
+.osk-key.wide:active,
+.osk-key.xwide:active { background: var(--key-bg-down); }
+
+.osk-key.mod {
+  background: var(--key-special-bg);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-wide);
+  color: var(--text-2);
+}
+
+/* armed: tinted fill + tinted hairline + tinted glyph, all three together */
+.osk-key.on {
+  background: var(--key-mod-on-bg);
+  border-color: var(--key-mod-on-line);
+  color: var(--key-mod-on-text);
+}
+.osk-key.on.latched {
+  border-color: var(--accent);
+  font-weight: var(--weight-bold);
+}
+.osk-key.on.latched::after {
+  content: "";
+  width: var(--space-1);
+  height: var(--space-1);
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+/* dead key: raised, with a pending-accent marker; goes .on once pressed */
+.osk-key.dead {
+  background: var(--surface-3);
+  color: var(--text);
+}
+.osk-key.dead::after {
+  content: "";
+  width: 60%;
+  height: 1px;
+  background: var(--line-control);
+}
+.osk-key.dead.on::after { background: var(--accent); }
+
+/* utility keys, and keys this layout cannot produce: quieter, same target */
+.osk-key.ghost {
+  background: var(--key-special-bg);
+  border-color: var(--line-strong);
+  color: var(--muted);
+  font-size: var(--text-micro);
+  font-weight: var(--weight-regular);
+  letter-spacing: var(--tracking-wide);
+}
+.osk-key.ghost:active {
+  background: var(--key-bg-down);
+  color: var(--text);
+}
+.osk-key:disabled { transform: none; }
+
+/* =============================================================================
+   11 · viewport edges
+   ========================================================================== */
+
+/* Narrow phones: the gap is never removed to fit columns, so the shell gives
+   up its padding instead. 320 − 2·4 − 9·6 = 258px across ten caps, and
+   --key-min-w clamps itself to 30px there, reserving 300px inside 312px. The
+   flat `--key-min-w: 28px` override this used to carry is gone: the token is
+   viewport-derived now, so hard-coding a second number here could only ever
+   disagree with it. */
+@media (max-width: 360px) {
+  .osk { padding-left: max(var(--space-1), var(--safe-l));
+         padding-right: max(var(--space-1), var(--safe-r));
+         padding-top: var(--space-1); }
+  .osk-key { padding: 0; }
+  .nib-toast { max-width: 72vw; }
+}
+
+/* Landscape, or a short phone. Height is the scarce axis here, and the answer
+   used to be to shrink the caps: clamp(34px, …) produced a 28×34px keycap,
+   which misses the sheet's own 44px minimum by nearly half on the one control
+   surface where a misfire types the wrong character into someone else's
+   computer. So the floor is --tap here too, and a preset too tall to fit at
+   44px SCROLLS instead of shrinking below it. The arithmetic: 6 rows × 44px +
+   5 × 6px gap + 24px of padding = 314px, which fits the 390px of a phone
+   turned sideways with the top chrome still clear of it. */
+@media (max-height: 560px) {
+  :root { --chrome-t: calc(var(--safe-t) + 6px); }
+  /* Sideways, a cap is wide (48px and up), so 32px of height with 4px gaps is
+     still a comfortable target, and it lets 5- and 6-row presets fit. A 7-row
+     preset on a very short screen still scrolls rather than shrinking further. */
+  .nib-keys {
+    --key-gap: 4px;
+    --kbd-pad: 4px;
+    --key-h: clamp(32px,
+               calc((58dvh - var(--osk-rows) * var(--key-gap)) / var(--osk-rows)),
+               46px);
+  }
+  /* The escape hatch that makes the 44px floor safe: a preset tall enough to
+     reach past the top chrome scrolls vertically rather than growing under it.
+     dvh, not vh, for the usual reason — vh is the window at its tallest, which
+     is the one measurement that would let the shell win this fight. pan-y is
+     added to touch-action because overflow alone cannot be panned by a finger
+     while touch-action says pan-x. */
+  .osk {
+    max-height: calc(min(var(--vvh, 100dvh), 100dvh) - var(--chrome-t) - var(--tap-mode) - var(--space-4));
+    overflow-y: auto;
+    touch-action: pan-x pan-y;
+  }
+  .nib-drawer-head { padding-top: calc(var(--safe-t) + var(--space-3)); }
+}
+
+/* =============================================================================
+   12 · accessibility fallbacks
+   Translucency is central to this design, so all three signals are answered,
+   and each answer still looks deliberate.
+   ========================================================================== */
+
+/* No backdrop-filter at all: the panes become nearly-opaque tinted cards.
+   All three overrides below composite ABOVE the page, which is the thing that
+   silently broke when the floor moved off #000: rgb(18 18 17/92%), #121211 and
+   rgb(6 6 6/92%) were each chosen to sit above a black page and each ended up
+   at or BELOW #0b0b0a, so every pane read as a hole rather than a card. */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  /* #1b1a19 composited, one step above the page. --text on it: 15.29:1. */
+  :root { --glass-bg: rgb(28 27 26 / 92%); }
+  .glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+/* Asked for less transparency: solid, unblurred, and the edges are promoted
+   from decoration to real boundaries. */
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    /* Fully opaque, and --surface-2 exactly: the same solid a control wears,
+       which is what "no transparency" should look like. --text on it 15.22:1. */
+    --glass-bg: #1c1b1a;
+    --glass-sheen: none;
+    --glass-boost: none;
+    --glass-blur-s: 0px;
+    --glass-blur-m: 0px;
+    --glass-blur-l: 0px;
+    --glass-edge: inset 0 0 0 1px var(--line-control);
+    --scrim: rgb(0 0 0 / 88%);
+  }
+  .glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+  .nib-drawer { --r: 0px; }
+  #stage-pad::after { display: none; }
+}
+
+/* Asked for more contrast: every edge becomes the one hairline that must be
+   seen, sections get a real rule, and the scroll-edge gradient gives way to
+   a border — a gradient is not a boundary. */
+@media (prefers-contrast: more) {
+  :root {
+    /* Composites to #0e0e0d, one step above the page, and 94% rather than 92%
+       so the pane is nearly solid where contrast was asked for. --text 16.98:1. */
+    --glass-bg: rgb(14 14 13 / 94%);
+    --glass-edge: inset 0 0 0 1px var(--line-control);
+    --glass-edge-top: inset 0 1px 0 var(--line-control);
+    --line: var(--line-strong);
+  }
+  /* The sheet is full bleed, so its bright edge runs along the TOP like every
+     other pane's; it used to run down a leading edge that no longer exists. */
+  .nib-drawer { --glass-edge-top: inset 0 1px 0 var(--line-control); }
+  /* A data URI cannot read a token, so the chevron is restated at --text. */
+  select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8' fill='none' stroke='%23f2f1ed' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1.5 6 6.5 11 1.5'/%3E%3C/svg%3E");
+  }
+  /* pad.js draws the trackpad's click division with --line, which is a
+     decorative 1.2:1 hairline. Here it is the only thing saying where the
+     left, middle and right buttons are, so it has to be a real boundary. */
+  #stage-pad .pad-buttons,
+  #stage-pad .pad-buttons > i { border-color: var(--line-control); }
+  /* A gradient is not a boundary: the scroll edge becomes a real rule. */
+  .nib-keys {
+    --glass-edge-top: inset 0 1px 0 var(--line-control);
+    border-top: 1px solid var(--line-control);
+  }
+  .nib-sect { border-top: 1px solid var(--line-control); }
+  .nib-drawer-head::after,
+  .nib-keys::before { display: none; }
+  .nib-drawer.is-scrolled .nib-drawer-head {
+    border-bottom: 1px solid var(--line-control);
+  }
+  .nib-icon,
+  .nib-mode,
+  .nib-pill { color: var(--text); }
+  .seg button { border-color: var(--line); }
+  .note,
+  .nib-sect-hint,
+  .lbl,
+  .nib-gesture-help { color: var(--text-2); }
+}
+
+/* =============================================================================
+   13 · reduced motion
+   Not "no feedback": a gentler, non-vestibular equivalent. motion.js checks
+   the same query and jumps its springs straight to the target, so the drawer
+   cross-fades instead of sliding. The 600ms hold stays 600ms — it is an
+   intent threshold, not decoration.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 1ms;
+    --dur-2: 1ms;
+    --dur-3: 1ms;
+    --press-scale: 1;
+  }
+
+  /* No translate, no scale: opacity carries the whole transition. */
+  .nib-drawer {
+    transform: none;
+    opacity: var(--p);
+    transition: opacity 200ms var(--ease-in-out);
+    --r: var(--glass-blur-l);
+  }
+  /* Finger-tracked while the sheet is being dragged, so the transition has to
+     get out of the way exactly as .nib-stage's does. Without this the 200ms
+     opacity fade lagged behind the drag and the sheet looked broken. */
+  body[data-drawer="drag"] .nib-drawer { transition: none; }
+  /* Invisible is not out of the way. With no translate left, a closed sheet was
+     a transparent full-screen pane sitting over the whole app: §5's
+     pointer-events stop it taking a tap, and `visibility: hidden` stops it
+     being tabbed into or read out as well. */
+  body[data-drawer="closed"] .nib-drawer { opacity: 0; visibility: hidden; }
+  body[data-drawer="open"] .nib-drawer { opacity: 1; visibility: visible; }
+  .nib-stage,
+  body[data-drawer="open"] .nib-stage { transform: none; }
+
+  /* The controls stop travelling; they simply are where they belong. */
+  #nib-menu,
+  .nib-mode { transition: none; }
+
+  .nib-toast.is-out { filter: none; scale: 1; translate: -50% 0; }
+  body[data-mode="keys"] .nib-toast.is-out { translate: 0 0; }
+  .nib-keys { transform: none; }
+  body[data-conn="wait"] .nib-dot { animation: none; opacity: 0.7; }
+  .nib-chev { transition: none; }
+  #snip-editor[open] > .editor,
+  .nib-sect[open] > .nib-sect-body { animation: none; }
+  @supports selector(::details-content) {
+    .nib-sect::details-content { transition: none; }
+  }
+}
+
+/* =============================================================================
+   14 · the desktop shell
+   body[data-shell] is resolved in JS from
+   `(hover: hover) and (pointer: fine) and (min-width: 700px)` plus a stored
+   override, and mirrored onto <body>. It is an ATTRIBUTE and not a bare media
+   query because the query alone gets the interesting cases wrong in both
+   directions: a touchscreen Windows laptop matches `pointer: fine` AND
+   `any-pointer: coarse`, while an iPad with a paired mouse matches
+   `any-pointer: fine` but `pointer: coarse`. Only the person knows which they
+   meant, so there is an override in the sheet — and never a user-agent sniff.
+   NOTE that layout is the only thing gated on this. Input binding is not:
+   pad.js binds both the touch and the pointer path always and filters per
+   event by pointerType, because `'ontouchstart' in window` is a capability
+   probe and not a statement about the device in front of you.
+
+   ON A DESKTOP THE PAD IS A CARD, NOT THE PAGE. Dragging a real pointer across
+   a full-window simulated pad is strictly worse than the pointer the person
+   already has, and a full-page pad also swallowed the native right-click
+   (pad.js preventDefaults contextmenu on its surface) and every text selection
+   on the page. Shrinking the surface scopes both to the card for free.
+   ========================================================================== */
+
+/* Every layout rule below is scoped `.nib-stage > …` on purpose. fullscreen.js
+   BORROWS #stage-pad and #stage-keys out of the stage and into its own slots,
+   where it sizes them itself; an unscoped rule here would follow them in and
+   fight it. The child combinator makes the hand-over automatic in both
+   directions.
+
+   The page becomes the ground and the cards lift off it, so the stage gives up
+   the --surface it wears on a phone. Without this the card and the stage are
+   the same colour and only a hairline says which is which. */
+body[data-shell="desktop"] .nib-stage { background: var(--bg); }
+
+/* Nothing on this screen is a simulated trackpad, so the click strip and the
+   row split go with it. The grab surface is the whole stage. */
+body[data-shell="desktop"][data-capture="surface"] .pad-buttons,
+body[data-shell="desktop"][data-capture="surface"] #stage-pad::after { display: none; }
+
+body[data-shell="desktop"][data-capture="surface"] .nib-stage > #stage-pad {
+  grid-area: 1 / 1 / -1 / 2;
+  width: auto;
+  aspect-ratio: auto;
+  max-height: none;
+  margin: 0;
+  background: var(--bg);
+  border: 0;
+  border-radius: 0;
+}
+
+/* The whole stage is the grab target. Clicking anywhere takes the pointer, so
+   there is no small button to aim at and no drawn pad to drag across. */
+.cap-surface {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-6);
+  background: none;
+  border: 0;
+  color: var(--text-2);
+  text-align: center;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.cap-surface-title {
+  font-size: var(--text-lead);
+  font-weight: var(--weight-medium);
+  letter-spacing: var(--tracking-tight);
+  color: var(--text);
+}
+.cap-surface-hint {
+  font-size: var(--text-caption);
+  color: var(--muted);
+}
+.cap-surface:hover .cap-surface-title { color: var(--accent); }
+.cap-surface:focus-visible {
+  outline: var(--focus-width) solid var(--focus);
+  outline-offset: calc(-1 * var(--focus-offset));
+}
+body[data-shell="desktop"][data-capture="none"] .nib-stage > #stage-pad {
+  /* Row 1 only. On a phone the pad spans every row so the keyboard floats over
+     it and no band of screen is lost; on a desktop height is not scarce and
+     the keyboard is better off with a band of its own. */
+  grid-area: 1 / 1 / 2 / 2;
+  width: min(640px, 60vw);
+  aspect-ratio: 16 / 10;
+  max-height: calc(100% - var(--space-8));
+  /* `margin: auto` and not `place-items: center` on the stage: place-items
+     would also stop the echo and the keyboard stretching, which is not what
+     either of them wants. Centre the two items that asked for it. */
+  margin: auto;
+  background: var(--bg);
+  border: 1px solid var(--line-control);
+  border-radius: var(--radius-xl);
+}
+
+body[data-shell="desktop"] .nib-stage > .nib-echo {
+  width: min(640px, 60vw);
+  margin-inline: auto;
+}
+
+body[data-shell="desktop"] .nib-stage > .nib-keys {
+  /* Sized by the preset: about 54px per key unit plus the padding, so a Full
+     keyboard gets the room it needs and a Numpad does not stretch. */
+  width: min(92vw, calc(var(--osk-units, 10) * 54px + 2 * var(--kbd-pad) + 2px));
+  margin: 0 auto max(var(--space-6), var(--safe-b));
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--line);
+  /* IT STOPS BEING GLASS HERE, and that is not a shortcut. The pad is a card
+     now, so the band behind the keyboard is uniform --bg, and blurring a
+     uniform field returns that field — the exact failure this stylesheet opens
+     by describing. A glass shell over flat ground is an invisible shell. */
+  --glass-bg: var(--surface-2);
+  --glass-sheen: none;
+  --r: 0px;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+/* It is a floating card, not a panel welded to the bottom edge, so the
+   scroll-edge gradient above it has nothing left to describe. */
+body[data-shell="desktop"] .nib-stage > .nib-keys::before { display: none; }
+
+/* The grab handle is absolute to the sheet, so once the content column is
+   centred it would float alone at the far left of a 1440px window. A mouse
+   does not drag sheets shut anyway: the close button, the Done button and the
+   back gesture are all better targets for it. */
+body[data-shell="desktop"] .nib-drawer-grab { display: none; }
+
+/* A sidebar, not a full-screen sheet. On a 1280px window a full-bleed pane is
+   a modal for no reason: there is room to keep the surface visible beside it,
+   and the capture surface behind stays readable. */
+body[data-shell="desktop"] .nib-drawer {
+  width: min(420px, 34vw);
+  border-right: 1px solid var(--line-strong);
+  box-shadow: 12px 0 40px rgb(0 0 0 / 72%);
+  --glass-bg: rgb(4 4 4 / 96%);
+}
+
+/* The sheet stays full screen — that is the whole point of the change — but a
+   settings column 1440px wide is unreadable, so the content inside it is
+   capped and centred while the overlay itself still covers everything. */
+body[data-shell="desktop"] .nib-drawer-head,
+body[data-shell="desktop"] .nib-drawer-body,
+body[data-shell="desktop"] .nib-drawer-foot {
+  width: min(760px, 100%);
+  margin-inline: auto;
+}
+
+/* ---------------------------------------------------------------- hover
+   Before this block the ONLY :hover rule in the entire codebase was
+   .fs-corner's, so a mouse user got no feedback at all until after they had
+   already committed the click. `:not(:active)` keeps the press states defined
+   earlier in the sheet on top, and the `:not(.on)` / `:not(.is-on)` filters
+   stop a hover from painting over a latched modifier or a selected preset —
+   which would otherwise read as the state having been cleared.            */
+@media (hover: hover) {
+  .btn:hover:not(:active):not(:disabled):not(.on),
+  .nib-preset:hover:not(:active):not(.is-on),
+  .nib-saver:hover:not(:active):not(.is-on),
+  .seg button:hover:not(:active):not(.on),
+  .snip:hover,
+  .osk-key:hover:not(:active):not(:disabled):not(.on):not(.dead) {
+    background: var(--surface-3);
+    border-color: var(--line-control);
+  }
+  .nib-icon:hover:not(:active),
+  .nib-pill:hover:not(:active):not(:disabled),
+  .nib-mode:hover:not(:active) { color: var(--text); }
+  .nib-sect-head:hover .nib-sect-title { color: var(--text); }
+}
+
+/* =============================================================================
+   15 · the last word: full screen wins
+   THIS BLOCK IS LAST ON PURPOSE. DO NOT MOVE IT, AND DO NOT ADD .nib-chrome
+   RULES AFTER IT.
+
+   `html.fs-open .nib-chrome` is (0,2,1). So is `body[data-drawer="open"]
+   .nib-chrome` in §4. When two rules tie on specificity the later one wins, so
+   the fullscreen override was being decided by where in the file somebody
+   happened to type — which is exactly how `html.fs-open .nib-edge` at §4 came
+   to lose to `body[data-drawer="closed"] .nib-edge` at §5 and leave a live
+   drag strip over the immersive layer. Restating the intent last makes source
+   order the deliberate mechanism instead of the accident.
+   ========================================================================== */
+
+html.fs-open .nib-chrome {
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+/* And the sheet cannot be left live underneath the immersive layer either:
+   fullscreen.js marks the rest of the document inert, but inert is not
+   invisible and a half-open sheet under a full-screen overlay is a ghost. */
+html.fs-open .nib-drawer { display: none; }
+
+/* Offline, the Dongle section leads with the one thing that unlocks it. */
+#ss-connect[hidden], #ss-live[hidden] { display: none; }
+#ss-live { display: flex; flex-direction: column; gap: var(--space-2); }
+
+/* An update is waiting for the link to drop; Reload applies it now. */
+#reload.has-update { color: var(--accent); }
+#reload.has-update::after {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); margin-left: calc(var(--space-1) * -1);
+}
+
+/* Custom modifier mapping: three label + select rows. */
+.nib-modmap-custom { display: grid; gap: var(--space-2); }
+.nib-modmap-custom label {
+  display: grid; grid-template-columns: 1fr auto; align-items: center;
+  gap: var(--space-3); color: var(--text-2); font-size: var(--text-caption);
+}
+.nib-modmap-custom select { width: auto; min-width: 9rem; }
+
+/* =============================================================================
+   13 · remote-style layouts (pads.js)
+   TV remote, Slides and Media replace the key grid. No keyboard shell: the
+   surface fills the stage under the top chrome, edge to edge. Components are
+   Nacre's dark set: #151613 ground, hairline edge, top sheen, bottom shade, a
+   0.97 press, and one pearl primary per surface.
+   ========================================================================== */
+
+#stage-keys[data-pad] {
+  background: none;
+  border: 0;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: 0;
+  /* from just under the top controls to the bottom edge */
+  height: calc(min(var(--vvh, 100dvh), 100dvh) - var(--chrome-t) - var(--tap) - var(--space-3));
+  align-self: end;
+}
+#stage-keys[data-pad]::before { display: none; }
+body[data-shell="desktop"] .nib-stage > #stage-keys[data-pad] {
+  width: min(460px, 92vw);
+  height: min(760px, calc(100dvh - 120px));
+  background: none;
+  border: 0;
+}
+
+.pad-root {
+  --pad-bg: #151613;
+  --pad-edge: rgb(255 255 255 / 11%);
+  --pad-sheen: inset 0 1px rgb(255 255 255 / 7%), inset 0 -1px rgb(0 0 0 / 28%);
+  --pad-gap: clamp(8px, 2.2vmin, 14px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--pad-gap);
+  height: 100%;
+  padding: var(--pad-gap) max(var(--pad-gap), var(--safe-r))
+           max(var(--pad-gap), var(--safe-b)) max(var(--pad-gap), var(--safe-l));
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.pad-root[hidden] { display: none; }
+
+.pad-row { display: flex; gap: var(--pad-gap); min-height: 0; }
+.pad-row > * { flex: 1 1 0; min-width: 0; }
+.pad-col { display: flex; flex-direction: column; gap: var(--pad-gap); justify-content: center; }
+
+/* ---- the button ---------------------------------------------------------- */
+.pad-btn {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: var(--tap);
+  padding: 0 10px;
+  border: 1px solid var(--pad-edge);
+  border-radius: 14px;
+  background: var(--pad-bg);
+  box-shadow: var(--pad-sheen), 0 10px 24px rgb(0 0 0 / 22%);
+  color: #f4f3ee;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  transition: transform 80ms cubic-bezier(0.2, 0, 0, 1), background 90ms ease-out,
+              box-shadow 160ms ease-out, border-color 90ms ease-out;
+  -webkit-tap-highlight-color: transparent;
+}
+.pad-btn.is-down, .pad-btn:active {
+  transform: scale(0.97);
+  background: #1c1d1a;
+  box-shadow: inset 0 1px rgb(255 255 255 / 5%), inset 0 2px 5px rgb(0 0 0 / 34%);
+}
+.pad-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.pad-ico { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8;
+  stroke-linecap: round; stroke-linejoin: round; }
+.pad-cap { font-size: 11px; font-weight: 500; color: rgb(244 243 238 / 62%); }
+.pad-lbl { line-height: 1.15; text-align: center; }
+
+.pad-round { border-radius: 999px; aspect-ratio: 1; min-height: 0; padding: 0; }
+
+/* The one pearl per surface: inverted, warm white, dark glyph. */
+.pad-primary {
+  background: linear-gradient(180deg, #ffffff, #e7e4dc);
+  border-color: rgb(255 255 255 / 60%);
+  color: #171816;
+  box-shadow: inset 0 1px #fff, inset 0 -2px rgb(0 0 0 / 12%), 0 12px 28px rgb(0 0 0 / 35%);
+}
+.pad-primary .pad-cap { color: rgb(23 24 22 / 60%); }
+.pad-primary.is-down, .pad-primary:active {
+  background: linear-gradient(180deg, #ecebe6, #d9d6ce);
+  box-shadow: inset 0 2px 6px rgb(0 0 0 / 18%);
+}
+
+/* ---- D-pad: a disc of four wedges and a pearl OK ------------------------- */
+.pad-dpad {
+  position: relative;
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  width: min(100%, var(--dpad, 260px));
+  align-self: center;
+  border-radius: 50%;
+  background: var(--pad-bg);
+  border: 1px solid var(--pad-edge);
+  box-shadow: var(--pad-sheen), 0 16px 36px rgb(0 0 0 / 30%);
+}
+.pad-wedge {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  box-shadow: none;
+  color: rgb(244 243 238 / 75%);
+  padding: 0;
+}
+.pad-wedge .pad-ico { position: absolute; width: 26px; height: 26px; }
+.pad-up    { clip-path: polygon(50% 50%, 0 0, 100% 0); }
+.pad-down  { clip-path: polygon(50% 50%, 0 100%, 100% 100%); }
+.pad-left  { clip-path: polygon(50% 50%, 0 0, 0 100%); }
+.pad-right { clip-path: polygon(50% 50%, 100% 0, 100% 100%); }
+.pad-up .pad-ico    { top: 9%; left: calc(50% - 13px); }
+.pad-down .pad-ico  { bottom: 9%; left: calc(50% - 13px); }
+.pad-left .pad-ico  { left: 9%; top: calc(50% - 13px); }
+.pad-right .pad-ico { right: 9%; top: calc(50% - 13px); }
+.pad-wedge.is-down, .pad-wedge:active {
+  transform: none;
+  background: radial-gradient(circle at 50% 50%, transparent 30%, rgb(255 255 255 / 9%) 31%);
+  box-shadow: none;
+  color: #fff;
+}
+.pad-ok {
+  position: absolute;
+  inset: 31%;
+  border-radius: 50%;
+  min-height: 0;
+  padding: 0;
+  background: linear-gradient(180deg, #ffffff, #e7e4dc);
+  border-color: rgb(255 255 255 / 60%);
+  color: #171816;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  box-shadow: inset 0 1px #fff, inset 0 -2px rgb(0 0 0 / 12%), 0 8px 20px rgb(0 0 0 / 40%);
+}
+
+/* ---- rocker: + over − in one pill --------------------------------------- */
+.pad-rocker {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  flex: 0 0 auto;
+  width: clamp(56px, 16vmin, 76px);
+  align-self: stretch;
+  border-radius: 999px;
+  background: var(--pad-bg);
+  border: 1px solid var(--pad-edge);
+  box-shadow: var(--pad-sheen), 0 10px 24px rgb(0 0 0 / 22%);
+  overflow: hidden;
+}
+.pad-rocker .pad-btn {
+  flex: 1 1 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 22px;
+  font-weight: 400;
+}
+.pad-rocker .pad-btn.is-down { background: rgb(255 255 255 / 7%); transform: none; }
+.pad-rock-lbl {
+  text-align: center;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: rgb(244 243 238 / 45%);
+}
+
+/* ---- TV remote ------------------------------------------------------------ */
+.pad-root[data-pad="tv"] { --dpad: min(56vw, 36dvh, 300px); justify-content: space-between; }
+.pad-root[data-pad="tv"] .pad-row-top { justify-content: space-around; }
+.pad-root[data-pad="tv"] .pad-row-top .pad-round { flex: 0 0 auto; width: clamp(52px, 15vmin, 72px); }
+.pad-root[data-pad="tv"] .pad-row-mid { flex: 1 1 auto; align-items: center; justify-content: space-between; }
+.pad-root[data-pad="tv"] .pad-row-mid > .pad-rocker { height: 70%; align-self: center; }
+.pad-root[data-pad="tv"] .pad-row-mid > .pad-dpad { flex: 0 0 auto; }
+.pad-root[data-pad="tv"] .pad-col { flex: 0 0 auto; }
+.pad-root[data-pad="tv"] .pad-col .pad-round { width: clamp(52px, 15vmin, 66px); }
+.pad-root[data-pad="tv"] .pad-row-trans { flex: 0 0 auto; }
+.pad-root[data-pad="tv"] .pad-row-trans .pad-btn { height: clamp(48px, 9dvh, 64px); border-radius: 999px; }
+
+/* ---- Slides ---------------------------------------------------------------- */
+.pad-root[data-pad="slides"] .pad-row-small { flex: 0 0 auto; }
+.pad-root[data-pad="slides"] .pad-row-small .pad-btn { height: 48px; font-size: 12px; }
+.pad-root[data-pad="slides"] .pad-row-main { flex: 1 1 auto; }
+.pad-root[data-pad="slides"] .pad-prev { flex: 1 1 0; }
+.pad-root[data-pad="slides"] .pad-next { flex: 2.2 1 0; }
+.pad-root[data-pad="slides"] .pad-row-main .pad-btn { border-radius: 22px; font-size: 16px; }
+.pad-root[data-pad="slides"] .pad-row-main .pad-ico { width: 34px; height: 34px; }
+.pad-root[data-pad="slides"] .pad-row-main .pad-cap { font-size: 14px; }
+
+/* ---- Media ----------------------------------------------------------------- */
+.pad-root[data-pad="media"] .pad-row-big { flex: 1 1 auto; align-items: center; justify-content: center; }
+.pad-root[data-pad="media"] .pad-row-big .pad-round { flex: 0 0 auto; width: clamp(60px, 17vmin, 84px); }
+.pad-root[data-pad="media"] .pad-row-big .pad-hero { width: clamp(88px, 26vmin, 124px); }
+.pad-root[data-pad="media"] .pad-row-big .pad-hero .pad-ico { width: 34px; height: 34px; }
+.pad-root[data-pad="media"] .pad-row-trans:not(.pad-row-big) .pad-btn { height: 52px; border-radius: 999px; }
+.pad-root[data-pad="media"] .pad-row-rockers { flex: 1 1 auto; justify-content: center; gap: 28px; min-height: 140px; }
+.pad-root[data-pad="media"] .pad-row-rockers .pad-rocker { flex: 0 0 auto; }
+.pad-root[data-pad="media"] .pad-row-apps { flex: 0 0 auto; flex-wrap: wrap; }
+.pad-root[data-pad="media"] .pad-row-apps .pad-btn { flex: 1 1 calc(25% - var(--pad-gap)); height: 44px; font-size: 12px; }
+
+/* ---- landscape: side by side instead of stacked ------------------------- */
+@media (orientation: landscape) and (max-height: 560px) {
+  .pad-root { --pad-gap: 8px; }
+  .pad-root[data-pad="tv"] {
+    display: grid;
+    grid-template-columns: auto 1fr 232px;
+    grid-template-rows: auto auto 1fr;
+    column-gap: 18px;
+    --dpad: min(62dvh, 250px);
+  }
+  .pad-root[data-pad="tv"] .pad-row-mid { display: contents; }
+  .pad-root[data-pad="tv"] .pad-row-mid > .pad-rocker { grid-column: 1; grid-row: 1 / 4; height: 100%; }
+  .pad-root[data-pad="tv"] .pad-row-mid > .pad-dpad { grid-column: 2; grid-row: 1 / 4; justify-self: center; align-self: center; }
+  .pad-root[data-pad="tv"] .pad-row-top { grid-column: 3; grid-row: 1; justify-content: space-between; }
+  .pad-root[data-pad="tv"] .pad-col { grid-column: 3; grid-row: 2; flex-direction: row; justify-content: space-between; }
+  .pad-root[data-pad="tv"] .pad-row-top .pad-round,
+  .pad-root[data-pad="tv"] .pad-col .pad-round { width: 58px; }
+  .pad-root[data-pad="tv"] .pad-row-trans { grid-column: 3; grid-row: 3; flex-wrap: wrap; align-content: end; }
+  .pad-root[data-pad="tv"] .pad-row-trans .pad-btn { flex: 1 1 64px; height: 42px; }
+  .pad-root[data-pad="slides"] .pad-row-small .pad-btn { height: 40px; }
+  .pad-root[data-pad="media"] { display: grid; grid-template-columns: 1fr auto; grid-template-rows: 1fr auto auto; }
+  .pad-root[data-pad="media"] .pad-row-big { grid-column: 1; grid-row: 1; }
+  .pad-root[data-pad="media"] .pad-row-trans:not(.pad-row-big) { grid-column: 1; grid-row: 2; }
+  .pad-root[data-pad="media"] .pad-row-rockers { grid-column: 2; grid-row: 1 / 3; min-height: 0; gap: 14px; }
+  .pad-root[data-pad="media"] .pad-row-apps { grid-column: 1 / 3; grid-row: 3; flex-wrap: nowrap; }
+  .pad-root[data-pad="media"] .pad-row-apps .pad-btn { height: 38px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pad-btn { transition: none; }
+  .pad-btn.is-down, .pad-btn:active { transform: none; }
+}
+
+/* ---- Gamepad ---------------------------------------------------------------
+   Laid out for a phone held sideways: left stick and D-pad under the left
+   thumb, face buttons and right stick under the right, shoulders along the
+   top edge. In portrait the two halves stack. */
+.pad-root[data-pad="gamepad"] { --gp: clamp(124px, 40vmin, 200px); justify-content: space-between; }
+.pad-row-shoulders { flex: 0 0 auto; }
+.pad-row-shoulders .pad-btn { height: 44px; border-radius: 12px; font-size: 13px; letter-spacing: 0.04em; }
+.pad-row-shoulders .pad-trig { border-radius: 12px 12px 18px 18px; }
+.pad-row-play { flex: 1 1 auto; align-items: center; justify-content: space-between; }
+.pad-row-play > .pad-side { flex: 0 0 auto; }
+.pad-row-meta { flex: 0 1 auto; flex-direction: column; align-items: center; gap: 10px; }
+.pad-row-meta .pad-meta { flex: 0 0 auto; min-height: 30px; height: 30px; padding: 0 14px;
+  border-radius: 999px; font-size: 11px; color: rgb(244 243 238 / 70%); }
+.pad-row-meta .pad-meta-home { width: 44px; height: 44px; font-size: 18px; color: #f4f3ee; }
+
+.pad-side { display: flex; align-items: center; gap: clamp(10px, 3vmin, 24px); }
+
+/* stick: a sunken well, a raised knob */
+.pad-stick {
+  position: relative;
+  flex: 0 0 auto;
+  width: var(--gp);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, #0e0f0d, #151613 70%);
+  border: 1px solid var(--pad-edge);
+  box-shadow: inset 0 3px 10px rgb(0 0 0 / 55%), inset 0 -1px rgb(255 255 255 / 5%);
+  touch-action: none;
+}
+.pad-knob {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 44%; aspect-ratio: 1;
+  margin: -22% 0 0 -22%;
+  border-radius: 50%;
+  background: linear-gradient(180deg, #2a2b28, #1a1b18);
+  border: 1px solid rgb(255 255 255 / 14%);
+  box-shadow: inset 0 1px rgb(255 255 255 / 10%), 0 8px 18px rgb(0 0 0 / 50%);
+  transition: transform 120ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  pointer-events: none;
+}
+.pad-stick.is-down .pad-knob { transition: none; background: linear-gradient(180deg, #32332f, #1f201c); }
+
+/* D-pad and face buttons: four buttons on a diamond */
+.pad-cross, .pad-face {
+  position: relative;
+  flex: 0 0 auto;
+  width: calc(var(--gp) * 1.08);   /* each of the four buttons is ~37% of this: 44px and up */
+  aspect-ratio: 1;
+}
+.pad-cross .pad-btn, .pad-face .pad-btn {
+  position: absolute;
+  width: 36%; height: 36%;
+  min-height: 0; padding: 0;
+  font-size: 15px; font-weight: 700;
+}
+.pad-cross .pad-btn { border-radius: 10px; font-size: 12px; color: rgb(244 243 238 / 75%); }
+.pad-face .pad-btn { border-radius: 50%; }
+.pad-c-up, .pad-f-top       { left: 32%; top: 0; }
+.pad-c-down, .pad-f-bottom  { left: 32%; bottom: 0; }
+.pad-c-left, .pad-f-left    { left: 0; top: 32%; }
+.pad-c-right, .pad-f-right  { right: 0; top: 32%; }
+
+@media (orientation: portrait) {
+  .pad-root[data-pad="gamepad"] { --gp: clamp(110px, 30vmin, 150px); }
+  .pad-row-play { flex-direction: column; justify-content: space-around; }
+  .pad-row-play > .pad-side { width: 100%; justify-content: space-between; }
+  .pad-row-meta { flex-direction: row; order: 1; }
+}
+/* The gamepad is landscape by nature: on desktop it gets a wide surface. */
+body[data-shell="desktop"] .nib-stage > #stage-keys[data-pad="gamepad"] {
+  width: min(980px, 94vw);
+  height: min(460px, calc(100dvh - 120px));
+}
+body[data-shell="desktop"] .pad-root[data-pad="gamepad"] { --gp: 150px; }
+
+/* The classic pads: fewer controls, so each one is bigger. */
+.pad-root[data-pad="gpclassic"], .pad-root[data-pad="gpstick"] {
+  --gp: clamp(140px, 48vmin, 230px); justify-content: space-between;
+}
+body[data-shell="desktop"] .nib-stage > #stage-keys:is([data-pad="gpclassic"], [data-pad="gpstick"]) {
+  width: min(860px, 94vw); height: min(440px, calc(100dvh - 120px));
+}
+body[data-shell="desktop"] .pad-root:is([data-pad="gpclassic"], [data-pad="gpstick"]) { --gp: 170px; }
+.pad-root:is([data-pad="gpclassic"], [data-pad="gpstick"]) .pad-row-shoulders .pad-btn { height: 48px; }
+@media (orientation: portrait) {
+  .pad-root:is([data-pad="gpclassic"], [data-pad="gpstick"]) .pad-row-play > .pad-side { justify-content: center; }
+}
+
+/* ---- menu furniture added in the restructure ---------------------------- */
+.nib-link {
+  align-self: flex-start;
+  padding: var(--space-2) 0;
+  background: none;
+  border: 0;
+  color: var(--accent);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  list-style: none;
+}
+.nib-link::-webkit-details-marker { display: none; }
+.nib-link:active { opacity: 0.7; }
+.nib-sub { display: flex; flex-direction: column; gap: var(--space-3); }
+.nib-sub[open] > .nib-link { color: var(--text-2); }
+.lbl-aside { color: var(--muted); font-weight: var(--weight-regular); text-transform: none; letter-spacing: 0; }
+.nib-savebar {
+  position: sticky;
+  bottom: 0;
+  padding: var(--space-3) 0 var(--space-2);
+  background: linear-gradient(to top, var(--bg) 70%, transparent);
+  z-index: 1;
+}
+.nib-savebar[hidden] { display: none; }
+.nib-savebar .btn { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+#set-forget.is-armed { background: rgb(255 120 110 / 16%); }
+.nib-about {
+  display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1);
+  padding: var(--space-5) 0 var(--space-3);
+  border-top: 1px solid var(--line);
+}
+#reload.has-update { color: var(--accent); }
+
+/* Screensavers: a strip you swipe, not a 20-tile wall. */
+.nib-savers {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 128px;
+  grid-template-columns: none;
+  gap: var(--space-3);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  padding: 4px 2px var(--space-1);
+  margin-inline: -2px;
+  touch-action: pan-x;
+}
+.nib-savers::-webkit-scrollbar { display: none; }
+.nib-savers > .nib-saver { scroll-snap-align: start; }
+@media (min-width: 520px) { .nib-savers { grid-template-columns: none; } }
+.nib-savebar .btn:hover:not(:active):not(:disabled):not(.on),
+.nib-savebar .btn:active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); filter: brightness(1.06); }
