@@ -1,0 +1,8 @@
+# Local ufbt SDK + ARM toolchain and Python venv (large, machine-specific).
+.ufbt/
+.venv-ufbt/
+# ufbt build outputs and editor metadata.
+dist/
+.vscode/
+# Host unit-test binary.
+test/test_protocol

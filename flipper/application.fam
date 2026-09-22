@@ -1,0 +1,28 @@
+# N.I.B. for Flipper Zero -- ufbt manifest.
+#
+# Build with the Flipper app SDK (not present in this repo):
+#   pip install ufbt && ufbt update
+#   cd flipper && ufbt launch      # build + install + run on a connected Flipper
+#
+# Requires firmware API >= 88.2 (dev as of 2026-09). Every symbol this app
+# needs is exported in targets/f7/api_symbols.csv at that version:
+#   usb_hid, furi_hal_usb_set_config, furi_hal_hid_* (USB HID side)
+#   furi_hal_bt_start_app / furi_hal_bt_change_app,
+#   ble_gatt_service_add / ble_gatt_characteristic_init / _update (BLE side)
+
+App(
+    appid="nib",
+    name="N.I.B.",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="nib_app",
+    # Explicit list: keep the host unit test (test/test_protocol.c, which has its
+    # own main()) OUT of the FAP. The shared decoder nib_protocol.c is built into
+    # both the FAP (here) and the host test (test/, built with cc, not ufbt).
+    sources=["nib.c", "nib_hid.c", "nib_ble.c", "nib_protocol.c"],
+    stack_size=4 * 1024,
+    fap_category="USB",
+    fap_description="Nearby Input Bridge: phone -> Flipper (BLE) -> USB keyboard+mouse.",
+    fap_author="N.I.B.",
+    fap_icon="nib_10px.png",
+    # fap_icon_assets="images",
+)
