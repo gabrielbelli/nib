@@ -24,6 +24,8 @@ installed on that side. It works at the login screen and inside full-screen apps
 The dongle is either a cheap **ESP32-S3** board or a **Flipper Zero** running the
 same app.
 
+**Live app: https://gabrielbelli.github.io/nib/** — open it on your phone, no install.
+
 ## Screenshots
 
 The phone app, connected to a dongle:
@@ -169,13 +171,14 @@ it. More detail is in [`flipper/README.md`](flipper/README.md).
 
 The app is static files. No server, no build step, no dependencies.
 
-1. **Serve it over HTTPS.** Web Bluetooth only runs in a secure context, so
-   `file://` will not work.
+1. **Open it.** The hosted copy at **https://gabrielbelli.github.io/nib/** is the
+   quickest path. To run your own, serve `web/` over HTTPS (Web Bluetooth needs a
+   secure context, so `file://` will not work):
    ```bash
    python3 serve.py    # setup page on :8088, app on :9443 over HTTPS
    ```
-   Or put `web/` on GitHub Pages or any static host. It behaves the same, and
-   publishing the page gives nothing away (see [Privacy](#privacy)).
+   Any static host works, and publishing the page gives nothing away (see
+   [Privacy](#privacy)).
 2. **Open the app** in a supported browser and tap **Connect**.
 3. **Pick your dongle** from the Bluetooth list and enter its passkey once.
 4. **Type, point, or switch layouts** from the menu.
