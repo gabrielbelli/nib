@@ -2,7 +2,7 @@
 // what `python3 serve.py` serves). Each test prints PASS or FAIL last.
 import { spawnSync } from 'node:child_process';
 const tests = ['fakebt', 'saver2', 'target', 'swap', 'capture', 'gamepad', 'migrate',
-               'updlink', 'haptics', 'misroute', 'hostinset', 'sweep', 'keys', 'fuzz'];
+               'updlink', 'haptics', 'misroute', 'hostinset', 'sweep', 'keys', 'dots', 'fuzz'];
 let failed = 0;
 for (const t of tests) {
   const r = spawnSync(process.execPath, [new URL(`./${t}.mjs`, import.meta.url).pathname],

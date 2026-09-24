@@ -12,6 +12,7 @@
 //   keymap.js       characters -> HID usage codes, per host layout
 //   motion.js       the one spring integrator
 //   pad.js          createTrackpad  -> owns #stage-pad
+//   dots.js         createDotField  -> the dot field under #stage-pad
 //   osk.js          createKeyboard  -> owns #stage-keys
 //   osk-presets.js  the 60% / 65% / compact / full / numpad / nav geometry
 //   fullscreen.js   createImmersive -> the full-screen shell
@@ -22,6 +23,7 @@ import * as ble from './ble.js?v=12';
 import { textToKeys, KEY, LAYOUTS, DEFAULT_LAYOUT } from './keymap.js?v=12';
 import { spring, project, rubberband, prefersReducedMotion } from './motion.js?v=12';
 import { createTrackpad, GESTURES } from './pad.js?v=12';
+import { createDotField } from './dots.js?v=12';
 import { createKeyboard } from './osk.js?v=12';
 import { createPads } from './pads.js?v=12';
 import {
@@ -716,55 +718,62 @@ const padEl = $('#stage-pad');
 
 const trackpad = createTrackpad({ surface: padEl, ble, log, store });
 
-// The finger glow. Deliberately no CSS transition on these: the pool has to be
-// glued to the finger at 1:1, or it reads as lag. Written on every contact so
-// the glass chrome always has something real to blur.
-let glowFrame = null;
-let glowAt = null;
-// Read once per contact, not once per frame. getBoundingClientRect() inside a
-// rAF callback, after writing inline styles on the same element, forces a
-// synchronous layout every frame - on the element paintStage() and the stage's
-// own scale() are both transforming. The glow only needs a ratio, so a rect one
-// gesture old is indistinguishable.
-let padRect = null;
-
-function readPadRect() {
-  const r = padEl.getBoundingClientRect();
-  padRect = (r.width && r.height) ? r : null;
-  return padRect;
-}
+// The dot field under the pad: a grid revealed around each finger, a wake
+// behind a moving one, and a ring out of every click. dots.js draws it; this
+// only feeds it contacts.
+const dots = createDotField(padEl);
 
 /** Called from onViewport() and whenever the pad changes container. */
 function invalidatePadRect() {
-  padRect = null;
+  dots.invalidate();
   trackpad?.invalidateGeometry?.();
 }
 
-function writeGlow() {
-  glowFrame = null;
-  if (!glowAt) return;
-  const r = padRect || readPadRect();
-  if (!r) return;
-  padEl.style.setProperty('--pad-x', `${((glowAt.x - r.left) / r.width * 100).toFixed(2)}%`);
-  padEl.style.setProperty('--pad-y', `${((glowAt.y - r.top) / r.height * 100).toFixed(2)}%`);
-}
-
-function glow(x, y) {
-  glowAt = { x, y };
-  if (glowFrame == null) glowFrame = requestAnimationFrame(writeGlow);
-}
-
 // Both paths, because pad.js calls preventDefault() on touchstart, and which of
-// touch and pointer survives that differs between engines. A contact STARTING is
-// the one moment the rect is measured.
-padEl.addEventListener('pointerdown', (e) => { readPadRect(); glow(e.clientX, e.clientY); }, { passive: true });
-padEl.addEventListener('pointermove', (e) => glow(e.clientX, e.clientY), { passive: true });
-const glowTouch = (e) => {
-  const t = e.touches?.[0];
-  if (t) glow(t.clientX, t.clientY);
+// touch and pointer survives that differs between engines. The de-duplication
+// rule is attachRecogniser()'s: where touch events exist the touch path owns
+// every finger, and the pointer path takes the mouse, plus a pen that produced
+// no touch. It must be a capability test, not a latch set by the first
+// touchstart: Chromium fires pointerdown BEFORE touchstart, so a latch let the
+// first finger after load in twice and parked a second halo where it landed.
+const dotsHasTouch = 'ontouchstart' in window;
+let dotsTouchLive = 0;
+const notPad = (t) => !!(t && t.closest && t.closest('.pad-corner,.pad-ignore,button,a,input,select,textarea'));
+const pointerIsFinger = (e) => dotsHasTouch && e.pointerType !== 'mouse'
+  && !(e.pointerType === 'pen' && dotsTouchLive === 0);
+
+padEl.addEventListener('touchstart', (e) => {
+  for (const t of e.changedTouches) {
+    dotsTouchLive++;
+    if (!notPad(t.target)) dots.down(`t${t.identifier}`, t.clientX, t.clientY);
+  }
+}, { passive: true });
+padEl.addEventListener('touchmove', (e) => {
+  for (const t of e.changedTouches) dots.move(`t${t.identifier}`, t.clientX, t.clientY);
+}, { passive: true });
+const dotsTouchEnd = (e) => {
+  for (const t of e.changedTouches) {
+    dotsTouchLive = Math.max(0, dotsTouchLive - 1);
+    dots.up(`t${t.identifier}`);
+  }
 };
-padEl.addEventListener('touchstart', (e) => { readPadRect(); glowTouch(e); }, { passive: true });
-padEl.addEventListener('touchmove', glowTouch, { passive: true });
+padEl.addEventListener('touchend', dotsTouchEnd, { passive: true });
+padEl.addEventListener('touchcancel', dotsTouchEnd, { passive: true });
+
+padEl.addEventListener('pointerdown', (e) => {
+  if (pointerIsFinger(e) || (e.pointerType === 'mouse' && e.button > 0) || notPad(e.target)) return;
+  dots.down(`p${e.pointerId}`, e.clientX, e.clientY);
+}, { passive: true });
+padEl.addEventListener('pointermove', (e) => {
+  if (!pointerIsFinger(e)) dots.move(`p${e.pointerId}`, e.clientX, e.clientY);
+}, { passive: true });
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) {
+  padEl.addEventListener(type, (e) => dots.up(`p${e.pointerId}`), { passive: true });
+}
+
+// A click throws one ring per finger; grabbing the button throws a softer one.
+trackpad.recogniser.on('tap', ({ fingers, x, y }) => dots.ripple(x, y, fingers));
+trackpad.recogniser.on('holdstart', ({ x, y }) => dots.ripple(x, y, 1, 0.6));
 
 // ---- the pad's own settings, one level deeper --------------------------------
 
