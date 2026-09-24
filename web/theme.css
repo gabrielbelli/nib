@@ -15,9 +15,9 @@
         becomes visible once blurred. `saturate(150%)` drags the warm cast of
         --accent out of it so the glass reads warm, not grey.
      2. SOMETHING TO EAT. #nib-stage and #stage-pad are not pure black: they
-        carry --field, a 5% warm wash from the top edge, and #stage-pad::after
-        paints --pad-glow, a soft pool glued to the finger. The material
-        announces itself exactly when the user is touching the screen.
+        carry --field, a 5% warm wash from the top edge, and dots.js lights
+        a grid of accent dots around the finger. The material announces
+        itself exactly when the user is touching the screen.
      3. EDGES. A bright 1px inner edge on the side facing the light, a dark 1px
         inner edge on the far side, and a low-alpha inner hairline all round.
         This is the single detail that makes a pane read as glass and not as a
@@ -83,7 +83,6 @@
                                                the dynamic one: they differ by
                                                the URL bar, by a DIFFERENT
                                                amount per orientation.
-     #stage-pad   --pad-x / --pad-y          — finger glow, percentages
      #stage-keys  --osk-rows / --osk-units   — from OSK_METRICS; key size and
                                                the sideways-scroll threshold
      #stage-keys  --origin-x / --origin-y    — the mode button's centre, so the
@@ -192,8 +191,6 @@
      the page is meant to be black with only the controls lifted off it. */
   --field:           radial-gradient(130% 90% at 50% 0%,
                        rgb(var(--accent-rgb) / 2%) 0%, transparent 62%);
-  --pad-glow:        radial-gradient(180px 180px at var(--pad-x, 50%) var(--pad-y, 50%),
-                       rgb(var(--accent-rgb) / 7%) 0%, transparent 70%);
 
   /* Kept from the previous sheet: the one outer shadow of the old design,
      still used by the keyboard in fullscreen, where .osk is opaque.         */
@@ -494,7 +491,7 @@ body[data-drawer="closed"] .nib-stage { transform: none; transition: none; }
   min-height: 0;
   overflow: hidden;
   /* True black: the pad fills the viewport, so anything here is the page
-     colour. --pad-glow under the finger is the only thing that lifts it. */
+     colour. The dot field under the finger is the only thing that lifts it. */
   background: var(--bg);
   touch-action: none;
   user-select: none;
@@ -502,24 +499,16 @@ body[data-drawer="closed"] .nib-stage { transform: none; transition: none; }
   -webkit-touch-callout: none;
 }
 
-/* The finger glow. NO transition on --pad-x / --pad-y: it has to be glued to
-   the contact at 1:1 or it reads as lag. */
-#stage-pad::after {
-  content: "";
+/* The dot field (dots.js). A canvas under .pad-layer, drawn only while
+   something moves; at rest it is cleared, so the pad stays black. */
+#stage-pad .pad-dots {
   position: absolute;
   inset: 0;
+  width: 100%;
+  height: 100%;
   z-index: 1;
   pointer-events: none;
-  background: var(--pad-glow);
-  /* Off until a finger is down. It defaults to 50%/50%, so at rest it painted
-     a warm pool in the middle of an otherwise black screen - the single
-     largest thing stopping the page from reading as black. pad.js adds
-     .active for the life of a contact. */
-  opacity: 0;
-  transition: opacity var(--dur-2) var(--ease-out);
 }
-
-#stage-pad.active::after { opacity: 1; }
 
 /* role="application" + tabindex="0" made the pad focusable, and the global
    focus ring sits OUTSIDE the box — where .nib-stage's overflow:hidden clips
@@ -2099,7 +2088,6 @@ input[type="range"]::-moz-range-thumb {
     backdrop-filter: none;
   }
   .nib-drawer { --r: 0px; }
-  #stage-pad::after { display: none; }
 }
 
 /* Asked for more contrast: every edge becomes the one hairline that must be
@@ -2235,7 +2223,7 @@ body[data-shell="desktop"] .nib-stage { background: var(--bg); }
 /* Nothing on this screen is a simulated trackpad, so the click strip and the
    row split go with it. The grab surface is the whole stage. */
 body[data-shell="desktop"][data-capture="surface"] .pad-buttons,
-body[data-shell="desktop"][data-capture="surface"] #stage-pad::after { display: none; }
+body[data-shell="desktop"][data-capture="surface"] #stage-pad .pad-dots { display: none; }
 
 body[data-shell="desktop"][data-capture="surface"] .nib-stage > #stage-pad {
   grid-area: 1 / 1 / -1 / 2;
