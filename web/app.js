@@ -2484,12 +2484,24 @@ const capDegraded = $('#cap-degraded');
 // shortcuts costs the whole screen. Offered only where the lock exists.
 const capFullscreen = $('#cap-fullscreen');
 const capFullscreenRow = $('#cap-fullscreen-row');
-capFullscreen.checked = store.get('nib.capture.fullscreen', false);
+// The same choice, on the capture surface itself, where it is decided: a
+// sibling of the card and not a child, because the card is one big button.
+const capSurfaceFs = document.createElement('label');
+capSurfaceFs.className = 'check cap-surface-fs pad-ignore';
+capSurfaceFs.hidden = true;
+const capSurfaceFsBox = document.createElement('input');
+capSurfaceFsBox.type = 'checkbox';
+capSurfaceFs.append(capSurfaceFsBox, ' Full screen, to hold Esc and shortcuts');
+const capFullscreenBoxes = [capFullscreen, capSurfaceFsBox];
 const capFullscreenOpt = () => (capFullscreen.checked ? 'auto' : false);
-capFullscreen.addEventListener('change', () => {
-  store.set('nib.capture.fullscreen', capFullscreen.checked);
-  capture?.setOption('fullscreen', capFullscreenOpt());
-});
+for (const box of capFullscreenBoxes) {
+  box.checked = store.get('nib.capture.fullscreen', false);
+  box.addEventListener('change', () => {
+    for (const other of capFullscreenBoxes) other.checked = box.checked;
+    store.set('nib.capture.fullscreen', box.checked);
+    capture?.setOption('fullscreen', capFullscreenOpt());
+  });
+}
 
 // The primary Capture button, on the pad card itself. Forwarding the real mouse
 // and keyboard is strictly better than dragging a real pointer across a
@@ -2505,7 +2517,7 @@ capTitle.className = 'cap-surface-title';
 const capHint = document.createElement('span');
 capHint.className = 'cap-surface-hint';
 capCard.append(capTitle, capHint);
-padEl.append(capCard);
+padEl.append(capCard, capSurfaceFs);
 
 let capture = null;
 
@@ -2535,10 +2547,12 @@ function paintSupport() {
       capture = createCapture({ transport: ble, surface: document.documentElement, modMap: target.modMap, targetIsMac: target.isApple, fullscreen: capFullscreenOpt() });
       capture.events.addEventListener('capturestart', (e) => {
         paintCapture(true, e.detail?.degraded);
+        paintCapCard();
         log('capturing \u00b7 Ctrl+Alt releases');
       });
       capture.events.addEventListener('capturestop', (e) => {
         paintCapture(false, null);
+        paintCapCard();
         log('capture stopped' + (e.detail?.reason ? ` (${e.detail.reason})` : ''));
       });
       capture.events.addEventListener('capturewarn', (e) => log('capture: ' + e.detail?.message));
@@ -2563,6 +2577,7 @@ function paintSupport() {
 function paintCapCard() {
   const on = SUPPORT.usable && body.dataset.shell === 'desktop';
   capCard.hidden = !on;
+  capSurfaceFs.hidden = !(on && SUPPORT.keyboardLock) || !!capture?.isActive();
   body.dataset.capture = on ? 'surface' : 'none';
 }
 

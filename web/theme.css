@@ -2266,6 +2266,19 @@ body[data-shell="desktop"][data-capture="surface"] .nib-stage > #stage-pad {
   color: var(--muted);
 }
 .cap-surface:hover .cap-surface-title { color: var(--accent); }
+/* Sits under the card's two lines, above the card so it takes its own clicks. */
+.cap-surface-fs {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  top: calc(50% + var(--space-8));
+  transform: translateX(-50%);
+  width: max-content;
+  margin: 0;
+  font-size: var(--text-caption);
+  color: var(--muted);
+}
+.cap-surface-fs[hidden] { display: none; }
 .cap-surface:focus-visible {
   outline: var(--focus-width) solid var(--focus);
   outline-offset: calc(-1 * var(--focus-offset));
