@@ -307,10 +307,11 @@ const DEFAULTS = {
   surface: null,                 // document.documentElement
   transport: null,               // ./ble.js
   requireConnection: true,
-  // 'auto' | true | false. Keyboard Lock only bites in fullscreen, and without
-  // it Esc, Tab and the browser's own shortcuts never reach the page, so 'auto'
-  // takes fullscreen exactly where that buys the lock and nowhere else.
-  fullscreen: 'auto',
+  // false | 'auto' | true. Keyboard Lock only bites in fullscreen, and without
+  // it Esc, Tab and the browser's own shortcuts never reach the page. 'auto'
+  // takes fullscreen exactly where that buys the lock and nowhere else. Off by
+  // default: a takeover of the whole screen is the user's call, not ours.
+  fullscreen: false,
   keyboardLock: 'auto',          // 'auto' | 'off'
   unadjustedMovement: true,
   sensitivity: 1.0,

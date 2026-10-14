@@ -2480,6 +2480,16 @@ const capSect = $('#sect-capture');
 const capState = $('#cap-state');
 const capToggle = $('#cap-toggle');
 const capDegraded = $('#cap-degraded');
+// Keyboard Lock only works in full screen, so holding Esc and the browser's
+// shortcuts costs the whole screen. Offered only where the lock exists.
+const capFullscreen = $('#cap-fullscreen');
+const capFullscreenRow = $('#cap-fullscreen-row');
+capFullscreen.checked = store.get('nib.capture.fullscreen', false);
+const capFullscreenOpt = () => (capFullscreen.checked ? 'auto' : false);
+capFullscreen.addEventListener('change', () => {
+  store.set('nib.capture.fullscreen', capFullscreen.checked);
+  capture?.setOption('fullscreen', capFullscreenOpt());
+});
 
 // The primary Capture button, on the pad card itself. Forwarding the real mouse
 // and keyboard is strictly better than dragging a real pointer across a
@@ -2517,11 +2527,12 @@ function paintCapture(on, notes) {
  * on Safari and Firefox - exactly what this file says it refuses to do.
  */
 function paintSupport() {
+  capFullscreenRow.hidden = !(SUPPORT.usable && SUPPORT.keyboardLock);
   if (SUPPORT.usable) {
     capSect.hidden = false;
     capToggle.disabled = false;
     if (!capture) {
-      capture = createCapture({ transport: ble, surface: document.documentElement, modMap: target.modMap, targetIsMac: target.isApple });
+      capture = createCapture({ transport: ble, surface: document.documentElement, modMap: target.modMap, targetIsMac: target.isApple, fullscreen: capFullscreenOpt() });
       capture.events.addEventListener('capturestart', (e) => {
         paintCapture(true, e.detail?.degraded);
         log('capturing \u00b7 Ctrl+Alt releases');

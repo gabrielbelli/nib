@@ -20,7 +20,7 @@ await page.evaluate(async () => {
     move: () => {}, button: (b, s) => __log.push(`btn ${b} ${s}`),
   };
   const surf = document.createElement('div'); surf.style.cssText = 'position:fixed;inset:0'; document.body.append(surf);
-  window.__cap = mod.createCapture({ surface: surf, transport: t, indicator: false });
+  window.__cap = mod.createCapture({ surface: surf, transport: t, indicator: false, fullscreen: 'auto' });
   window.__stops = [];
   __cap.events.addEventListener('capturestop', (e) => __stops.push(e.detail.reason));
 });

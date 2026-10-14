@@ -233,11 +233,13 @@ takes with no driver. Only names and shortcuts differ, and the app handles them.
   The menu also offers "for shortcuts", "as labelled" and a custom table, and the
   capture panel shows each translation live.
 
-In Chrome and Edge, capture goes full screen and locks the keyboard, so Esc, Tab
-and the browser's own shortcuts (Ctrl+W, Ctrl+T) go to the other computer, and
-on Windows and Linux so do Alt+Tab and the Windows key. Holding Esc leaves full
-screen and releases. Safari and Firefox cannot lock the keyboard: there the
-browser keeps its shortcuts and Esc also frees the mouse.
+By default the browser keeps its own shortcuts, and Esc goes across but also
+frees the mouse. Chrome and Edge can do better, at the price of the whole
+screen: turn on "Full screen" in the capture menu and capture locks the
+keyboard, so Esc, Tab and the browser's own shortcuts (Ctrl+W, Ctrl+T) go to the
+other computer, and on Windows and Linux so do Alt+Tab and the Windows key.
+Holding Esc leaves full screen and releases. Brave, Safari and Firefox cannot
+lock the keyboard, so the option is not shown there.
 
 No browser can capture Cmd+Tab on a Mac or Ctrl+Alt+Del on Windows. Those reach
 the local machine first, so the on-screen keyboard sends them instead. Typing in a BIOS needs a boot-protocol keyboard,
