@@ -307,7 +307,10 @@ const DEFAULTS = {
   surface: null,                 // document.documentElement
   transport: null,               // ./ble.js
   requireConnection: true,
-  fullscreen: false,             // never forced; Keyboard Lock is a bonus, not worth a takeover
+  // 'auto' | true | false. Keyboard Lock only bites in fullscreen, and without
+  // it Esc, Tab and the browser's own shortcuts never reach the page, so 'auto'
+  // takes fullscreen exactly where that buys the lock and nowhere else.
+  fullscreen: 'auto',
   keyboardLock: 'auto',          // 'auto' | 'off'
   unadjustedMovement: true,
   sensitivity: 1.0,
@@ -743,8 +746,9 @@ export function createCapture(options = {}) {
     // The browser let go of the mouse, almost always because Esc was pressed.
     // That is not a request to stop capturing: the keyboard stays with the
     // other computer, the Esc goes there too (if its keydown was swallowed by
-    // the browser), and a click grabs the mouse again.
-    if (Date.now() - escSentAt > 400) sendKey('Escape');
+    // the browser), and a click grabs the mouse again. Under Keyboard Lock the
+    // keydown always arrives, so there is nothing to make up for.
+    if (!keyboardLockOn && Date.now() - escSentAt > 400) sendKey('Escape');
     if (buttons) { transport.button(buttons, 0); buttons = 0; }
     mouseFree = true;
     setIndicatorText();
@@ -752,7 +756,8 @@ export function createCapture(options = {}) {
 
   function onFullscreenChange() {
     if (!active || arming) return;
-    if (weTookFullscreen && !document.fullscreenElement) stop('fullscreen');
+    // Leaving fullscreen drops Keyboard Lock with it, whoever entered it.
+    if ((weTookFullscreen || keyboardLockOn) && !document.fullscreenElement) stop('fullscreen');
   }
 
   const onBlur       = () => { if (active) stop('blur'); };
@@ -877,7 +882,9 @@ export function createCapture(options = {}) {
     releaseEverything(true);
 
     try {
-      if (opts.fullscreen) {
+      const canLockKeys = opts.keyboardLock !== 'off'
+        && typeof navigator.keyboard?.lock === 'function';
+      if (opts.fullscreen === 'auto' ? canLockKeys : opts.fullscreen) {
         weTookFullscreen = await goFullscreen();
         if (!weTookFullscreen && !document.fullscreenElement) {
           degraded.push('not fullscreen, browser chords may escape');
@@ -885,7 +892,7 @@ export function createCapture(options = {}) {
       }
 
       keyboardLockOn = false;
-      if (opts.keyboardLock !== 'off' && typeof navigator.keyboard?.lock === 'function') {
+      if (canLockKeys) {
         try {
           await navigator.keyboard.lock();
           // The lock resolves anywhere, but only bites in fullscreen.
@@ -1156,7 +1163,8 @@ export function createCapture(options = {}) {
   }
 
   function releaseWord() {
-    return mouseFree ? 'Click for the mouse · <b>Ctrl+Alt</b> releases' : '<b>Ctrl+Alt</b> releases';
+    if (mouseFree) return 'Click for the mouse · <b>Ctrl+Alt</b> releases';
+    return keyboardLockOn ? '<b>Ctrl+Alt</b> or holding <b>Esc</b> releases' : '<b>Ctrl+Alt</b> releases';
   }
 
   function setIndicatorText() {
@@ -1180,8 +1188,11 @@ export function createCapture(options = {}) {
 
     // One quiet line instead of a list: what stays on this computer.
     const bits = [];
+    // Keyboard Lock takes Alt+Tab and the Windows key too; macOS keeps Cmd+Tab
+    // whatever the browser asks for.
     if (!keyboardLockOn) bits.push('browser shortcuts');
-    bits.push('OS shortcuts like ' + (mac ? 'Cmd+Tab' : 'Alt+Tab'));
+    if (mac || !keyboardLockOn) bits.push('OS shortcuts like ' + (mac ? 'Cmd+Tab' : 'Alt+Tab'));
+    else bits.push('Ctrl+Alt+Del');
     const extra = [...degraded.filter((d) => !/Keyboard Lock/.test(d))];
     if (warned.has('ime')) extra.push('an input method is swallowing keys');
     n.note.textContent = 'Stays on this computer: ' + bits.join(', ') + '.'
