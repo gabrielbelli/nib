@@ -307,7 +307,11 @@ const DEFAULTS = {
   surface: null,                 // document.documentElement
   transport: null,               // ./ble.js
   requireConnection: true,
-  fullscreen: false,             // never forced; Keyboard Lock is a bonus, not worth a takeover
+  // false | 'auto' | true. Keyboard Lock only bites in fullscreen, and without
+  // it Esc, Tab and the browser's own shortcuts never reach the page. 'auto'
+  // takes fullscreen exactly where that buys the lock and nowhere else. Off by
+  // default: a takeover of the whole screen is the user's call, not ours.
+  fullscreen: false,
   keyboardLock: 'auto',          // 'auto' | 'off'
   unadjustedMovement: true,
   sensitivity: 1.0,
@@ -547,14 +551,31 @@ export function createCapture(options = {}) {
     touch();
   }
 
+  // The browser freed the mouse (Esc, with no Keyboard Lock to stop it). The
+  // next click or key press takes it back, so Esc costs a visible cursor for a
+  // moment rather than the mouse for good. Both are user gestures, which the
+  // browser demands, and its activation outlasts the re-lock cooldown, so a
+  // gesture that lands inside the cooldown is honoured when it ends.
+  let retakeTimer = null;
+  function retakeMouse() {
+    if (!active || !mouseFree || retakeTimer) return;
+    const wait = Math.max(0, RELOCK_COOLDOWN_MS - (Date.now() - lastUnlockAt));
+    retakeTimer = setTimeout(() => {
+      retakeTimer = null;
+      if (!active || !mouseFree) return;
+      lockPointer().then((r) => {
+        if (!r.ok || !active) return;
+        pointerLockOn = true; mouseFree = false; setIndicatorText();
+      });
+    }, wait);
+  }
+
   function onMouseDown(e) {
     if (!active) return;
     e.preventDefault();
     if (mouseFree) {
       // This click only takes the mouse back; it is not sent across.
-      const wait = RELOCK_COOLDOWN_MS - (Date.now() - lastUnlockAt);
-      if (wait > 0) { emit('capturewarn', { code: 'cooldown', message: 'a moment, then click again' }); return; }
-      lockPointer().then((r) => { if (r.ok) { pointerLockOn = true; mouseFree = false; setIndicatorText(); } });
+      retakeMouse();
       return;
     }
     const hid = DOM_TO_HID[e.button];
@@ -636,6 +657,7 @@ export function createCapture(options = {}) {
     // consequence: repeat rate and delay are the remote machine's.
     if (e.repeat) { touch(); return; }
 
+    if (mouseFree) retakeMouse();
     reconcile(e);
 
     const phys = e.code;
@@ -743,8 +765,9 @@ export function createCapture(options = {}) {
     // The browser let go of the mouse, almost always because Esc was pressed.
     // That is not a request to stop capturing: the keyboard stays with the
     // other computer, the Esc goes there too (if its keydown was swallowed by
-    // the browser), and a click grabs the mouse again.
-    if (Date.now() - escSentAt > 400) sendKey('Escape');
+    // the browser), and a click grabs the mouse again. Under Keyboard Lock the
+    // keydown always arrives, so there is nothing to make up for.
+    if (!keyboardLockOn && Date.now() - escSentAt > 400) sendKey('Escape');
     if (buttons) { transport.button(buttons, 0); buttons = 0; }
     mouseFree = true;
     setIndicatorText();
@@ -752,7 +775,8 @@ export function createCapture(options = {}) {
 
   function onFullscreenChange() {
     if (!active || arming) return;
-    if (weTookFullscreen && !document.fullscreenElement) stop('fullscreen');
+    // Leaving fullscreen drops Keyboard Lock with it, whoever entered it.
+    if ((weTookFullscreen || keyboardLockOn) && !document.fullscreenElement) stop('fullscreen');
   }
 
   const onBlur       = () => { if (active) stop('blur'); };
@@ -877,7 +901,9 @@ export function createCapture(options = {}) {
     releaseEverything(true);
 
     try {
-      if (opts.fullscreen) {
+      const canLockKeys = opts.keyboardLock !== 'off'
+        && typeof navigator.keyboard?.lock === 'function';
+      if (opts.fullscreen === 'auto' ? canLockKeys : opts.fullscreen) {
         weTookFullscreen = await goFullscreen();
         if (!weTookFullscreen && !document.fullscreenElement) {
           degraded.push('not fullscreen, browser chords may escape');
@@ -885,7 +911,7 @@ export function createCapture(options = {}) {
       }
 
       keyboardLockOn = false;
-      if (opts.keyboardLock !== 'off' && typeof navigator.keyboard?.lock === 'function') {
+      if (canLockKeys) {
         try {
           await navigator.keyboard.lock();
           // The lock resolves anywhere, but only bites in fullscreen.
@@ -995,6 +1021,7 @@ export function createCapture(options = {}) {
     clearInterval(statsTimer); statsTimer = null;
     clearInterval(idleTimer);  idleTimer = null;
     clearTimeout(escHoldTimer); escHoldTimer = null;
+    clearTimeout(retakeTimer); retakeTimer = null;
     escPending = false;
   }
 
@@ -1156,7 +1183,8 @@ export function createCapture(options = {}) {
   }
 
   function releaseWord() {
-    return mouseFree ? 'Click for the mouse · <b>Ctrl+Alt</b> releases' : '<b>Ctrl+Alt</b> releases';
+    if (mouseFree) return 'Click or type for the mouse · <b>Ctrl+Alt</b> releases';
+    return keyboardLockOn ? '<b>Ctrl+Alt</b> or holding <b>Esc</b> releases' : '<b>Ctrl+Alt</b> releases';
   }
 
   function setIndicatorText() {
@@ -1180,8 +1208,11 @@ export function createCapture(options = {}) {
 
     // One quiet line instead of a list: what stays on this computer.
     const bits = [];
+    // Keyboard Lock takes Alt+Tab and the Windows key too; macOS keeps Cmd+Tab
+    // whatever the browser asks for.
     if (!keyboardLockOn) bits.push('browser shortcuts');
-    bits.push('OS shortcuts like ' + (mac ? 'Cmd+Tab' : 'Alt+Tab'));
+    if (mac || !keyboardLockOn) bits.push('OS shortcuts like ' + (mac ? 'Cmd+Tab' : 'Alt+Tab'));
+    else bits.push('Ctrl+Alt+Del');
     const extra = [...degraded.filter((d) => !/Keyboard Lock/.test(d))];
     if (warned.has('ime')) extra.push('an input method is swallowing keys');
     n.note.textContent = 'Stays on this computer: ' + bits.join(', ') + '.'

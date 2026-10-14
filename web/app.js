@@ -2480,6 +2480,28 @@ const capSect = $('#sect-capture');
 const capState = $('#cap-state');
 const capToggle = $('#cap-toggle');
 const capDegraded = $('#cap-degraded');
+// Keyboard Lock only works in full screen, so holding Esc and the browser's
+// shortcuts costs the whole screen. Offered only where the lock exists.
+const capFullscreen = $('#cap-fullscreen');
+const capFullscreenRow = $('#cap-fullscreen-row');
+// The same choice, on the capture surface itself, where it is decided: a
+// sibling of the card and not a child, because the card is one big button.
+const capSurfaceFs = document.createElement('label');
+capSurfaceFs.className = 'check cap-surface-fs pad-ignore';
+capSurfaceFs.hidden = true;
+const capSurfaceFsBox = document.createElement('input');
+capSurfaceFsBox.type = 'checkbox';
+capSurfaceFs.append(capSurfaceFsBox, ' Full screen, to hold Esc and shortcuts');
+const capFullscreenBoxes = [capFullscreen, capSurfaceFsBox];
+const capFullscreenOpt = () => (capFullscreen.checked ? 'auto' : false);
+for (const box of capFullscreenBoxes) {
+  box.checked = store.get('nib.capture.fullscreen', false);
+  box.addEventListener('change', () => {
+    for (const other of capFullscreenBoxes) other.checked = box.checked;
+    store.set('nib.capture.fullscreen', box.checked);
+    capture?.setOption('fullscreen', capFullscreenOpt());
+  });
+}
 
 // The primary Capture button, on the pad card itself. Forwarding the real mouse
 // and keyboard is strictly better than dragging a real pointer across a
@@ -2495,7 +2517,7 @@ capTitle.className = 'cap-surface-title';
 const capHint = document.createElement('span');
 capHint.className = 'cap-surface-hint';
 capCard.append(capTitle, capHint);
-padEl.append(capCard);
+padEl.append(capCard, capSurfaceFs);
 
 let capture = null;
 
@@ -2517,17 +2539,20 @@ function paintCapture(on, notes) {
  * on Safari and Firefox - exactly what this file says it refuses to do.
  */
 function paintSupport() {
+  capFullscreenRow.hidden = !(SUPPORT.usable && SUPPORT.keyboardLock);
   if (SUPPORT.usable) {
     capSect.hidden = false;
     capToggle.disabled = false;
     if (!capture) {
-      capture = createCapture({ transport: ble, surface: document.documentElement, modMap: target.modMap, targetIsMac: target.isApple });
+      capture = createCapture({ transport: ble, surface: document.documentElement, modMap: target.modMap, targetIsMac: target.isApple, fullscreen: capFullscreenOpt() });
       capture.events.addEventListener('capturestart', (e) => {
         paintCapture(true, e.detail?.degraded);
+        paintCapCard();
         log('capturing \u00b7 Ctrl+Alt releases');
       });
       capture.events.addEventListener('capturestop', (e) => {
         paintCapture(false, null);
+        paintCapCard();
         log('capture stopped' + (e.detail?.reason ? ` (${e.detail.reason})` : ''));
       });
       capture.events.addEventListener('capturewarn', (e) => log('capture: ' + e.detail?.message));
@@ -2552,6 +2577,7 @@ function paintSupport() {
 function paintCapCard() {
   const on = SUPPORT.usable && body.dataset.shell === 'desktop';
   capCard.hidden = !on;
+  capSurfaceFs.hidden = !(on && SUPPORT.keyboardLock) || !!capture?.isActive();
   body.dataset.capture = on ? 'surface' : 'none';
 }
 

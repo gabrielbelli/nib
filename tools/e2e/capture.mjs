@@ -20,7 +20,7 @@ await page.evaluate(async () => {
     move: () => {}, button: (b, s) => __log.push(`btn ${b} ${s}`),
   };
   const surf = document.createElement('div'); surf.style.cssText = 'position:fixed;inset:0'; document.body.append(surf);
-  window.__cap = mod.createCapture({ surface: surf, transport: t, indicator: false });
+  window.__cap = mod.createCapture({ surface: surf, transport: t, indicator: false, fullscreen: 'auto' });
   window.__stops = [];
   __cap.events.addEventListener('capturestop', (e) => __stops.push(e.detail.reason));
 });
@@ -32,6 +32,9 @@ const fails = [];
 await start();
 let s = await state();
 if (!s.active) fails.push('capture did not start: ' + JSON.stringify(s));
+// 0. it really holds the keyboard: fullscreen taken, Keyboard Lock on
+let held = await page.evaluate(() => ({ kb: __cap.state().keyboardLock, fs: !!document.fullscreenElement }));
+if (!held.kb || !held.fs) fails.push('keyboard not locked on start: ' + JSON.stringify(held));
 
 // 1. Esc goes across, capture stays on
 await clear();
@@ -58,6 +61,8 @@ await page.keyboard.up('Alt'); await page.keyboard.up('Control');
 await page.waitForTimeout(150);
 s = await state();
 if (!s.stops.includes('chord')) fails.push('Ctrl+Alt did not release: ' + JSON.stringify(s));
+await page.waitForTimeout(300);
+if (await page.evaluate(() => !!document.fullscreenElement)) fails.push('release left the page fullscreen');
 
 // 4. Ctrl+Shift+Alt: no release (Shift disarms)
 await page.waitForTimeout(1400);   // the browser's re-lock cooldown
@@ -75,8 +80,24 @@ await page.keyboard.press('KeyA');
 s = await state();
 if (!s.log.some((l) => /^down 4 /.test(l))) fails.push('A not forwarded: ' + JSON.stringify(s.log));
 
-// 6. the browser drops pointer lock (Esc swallowed): keyboard stays, Esc forwarded
+// 6. Keyboard Lock held: losing the mouse makes up no Esc; leaving fullscreen stops
 await page.waitForTimeout(500); await clear();
+await page.evaluate(() => document.exitPointerLock());
+await page.waitForTimeout(100);
+s = await state();
+if (s.stops.length) fails.push('pointer-lock loss stopped locked capture: ' + s.stops);
+if (s.log.some((l) => /(tap|down) 41 /.test(l))) fails.push('Esc made up under Keyboard Lock: ' + JSON.stringify(s.log));
+await page.evaluate(() => document.exitFullscreen());
+await page.waitForTimeout(300);
+s = await state();
+if (!s.stops.includes('fullscreen')) fails.push('leaving fullscreen did not release: ' + JSON.stringify(s));
+
+// 7. no Keyboard Lock (Safari, Firefox): the browser drops pointer lock on Esc
+//    and swallows it: keyboard stays, Esc forwarded
+await page.evaluate(() => __cap.setOption('keyboardLock', 'off'));
+await page.waitForTimeout(1400);
+await start(); await clear();
+if (await page.evaluate(() => !!document.fullscreenElement)) fails.push('took fullscreen with no lock to gain');
 await page.evaluate(() => document.exitPointerLock());
 await page.waitForTimeout(100);
 s = await state();
@@ -86,6 +107,9 @@ await clear();
 await page.keyboard.press('KeyB');
 s = await state();
 if (!s.log.some((l) => /^down 5 /.test(l))) fails.push('keyboard not captured after lock loss');
+// 8. and that key press takes the mouse back, once the browser's cooldown is over
+await page.waitForTimeout(1600);
+if (!(await page.evaluate(() => !!document.pointerLockElement && __cap.state().pointerLock))) fails.push('typing did not take the mouse back');
 
 await browser.close();
 for (const e of errors) fails.push('pageerror ' + e);
