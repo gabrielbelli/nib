@@ -551,14 +551,31 @@ export function createCapture(options = {}) {
     touch();
   }
 
+  // The browser freed the mouse (Esc, with no Keyboard Lock to stop it). The
+  // next click or key press takes it back, so Esc costs a visible cursor for a
+  // moment rather than the mouse for good. Both are user gestures, which the
+  // browser demands, and its activation outlasts the re-lock cooldown, so a
+  // gesture that lands inside the cooldown is honoured when it ends.
+  let retakeTimer = null;
+  function retakeMouse() {
+    if (!active || !mouseFree || retakeTimer) return;
+    const wait = Math.max(0, RELOCK_COOLDOWN_MS - (Date.now() - lastUnlockAt));
+    retakeTimer = setTimeout(() => {
+      retakeTimer = null;
+      if (!active || !mouseFree) return;
+      lockPointer().then((r) => {
+        if (!r.ok || !active) return;
+        pointerLockOn = true; mouseFree = false; setIndicatorText();
+      });
+    }, wait);
+  }
+
   function onMouseDown(e) {
     if (!active) return;
     e.preventDefault();
     if (mouseFree) {
       // This click only takes the mouse back; it is not sent across.
-      const wait = RELOCK_COOLDOWN_MS - (Date.now() - lastUnlockAt);
-      if (wait > 0) { emit('capturewarn', { code: 'cooldown', message: 'a moment, then click again' }); return; }
-      lockPointer().then((r) => { if (r.ok) { pointerLockOn = true; mouseFree = false; setIndicatorText(); } });
+      retakeMouse();
       return;
     }
     const hid = DOM_TO_HID[e.button];
@@ -640,6 +657,7 @@ export function createCapture(options = {}) {
     // consequence: repeat rate and delay are the remote machine's.
     if (e.repeat) { touch(); return; }
 
+    if (mouseFree) retakeMouse();
     reconcile(e);
 
     const phys = e.code;
@@ -1003,6 +1021,7 @@ export function createCapture(options = {}) {
     clearInterval(statsTimer); statsTimer = null;
     clearInterval(idleTimer);  idleTimer = null;
     clearTimeout(escHoldTimer); escHoldTimer = null;
+    clearTimeout(retakeTimer); retakeTimer = null;
     escPending = false;
   }
 
@@ -1164,7 +1183,7 @@ export function createCapture(options = {}) {
   }
 
   function releaseWord() {
-    if (mouseFree) return 'Click for the mouse · <b>Ctrl+Alt</b> releases';
+    if (mouseFree) return 'Click or type for the mouse · <b>Ctrl+Alt</b> releases';
     return keyboardLockOn ? '<b>Ctrl+Alt</b> or holding <b>Esc</b> releases' : '<b>Ctrl+Alt</b> releases';
   }
 

@@ -107,6 +107,9 @@ await clear();
 await page.keyboard.press('KeyB');
 s = await state();
 if (!s.log.some((l) => /^down 5 /.test(l))) fails.push('keyboard not captured after lock loss');
+// 8. and that key press takes the mouse back, once the browser's cooldown is over
+await page.waitForTimeout(1600);
+if (!(await page.evaluate(() => !!document.pointerLockElement && __cap.state().pointerLock))) fails.push('typing did not take the mouse back');
 
 await browser.close();
 for (const e of errors) fails.push('pageerror ' + e);
